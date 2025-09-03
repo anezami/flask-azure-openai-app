@@ -2,7 +2,7 @@
 
 Single-page Flask app for grammar correction and translation powered by Azure OpenAI (GPT-4o). The app trusts Azure App Service built-in authentication (e.g., Google, Microsoft Entra ID) and authenticates to Azure OpenAI using System Assigned Managed Identity via `DefaultAzureCredential`.
 
-Note: The folder `flask-azure-openai-app` is deprecated and kept temporarily; use the app at the repository root.
+Note: The legacy `flask-azure-openai-app` subfolder has been removed. The app at the repository root is the single source of truth.
 
 ## Features
 - Single-page UI with:
@@ -31,7 +31,7 @@ FLASK_SECRET_KEY=your-random-secret
 # Azure OpenAI (Managed Identity)
 AZURE_OPENAI_ENDPOINT=https://<your-ai-foundry-endpoint>.openai.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
-AZURE_OPENAI_API_VERSION=2024-06-01
+AZURE_OPENAI_API_VERSION=2024-06-01  # default used by app if unset; you can also use newer preview versions
 
 # Model/runtime tuning (optional)
 AOAI_TEMPERATURE=0.2
@@ -57,12 +57,16 @@ pip install -r requirements.txt
 $env:AZURE_OPENAI_ENDPOINT="https://<your-ai-foundry-endpoint>.openai.azure.com/"
 $env:AZURE_OPENAI_DEPLOYMENT="gpt-4o"
 $env:AZURE_OPENAI_API_VERSION="2024-06-01"
-$env:DISABLE_AUTH="true"  # App Service auth headers don’t exist locally
 
 python .\scripts\smoke_test.py
 python app.py
 ```
 Browse `http://localhost:8000`.
+
+Optional live Azure OpenAI test (uses your current `az login` context):
+```pwsh
+python .\scripts\live_test_aoai.py
+```
 
 ## Azure Web App Built-in Authentication
 Configure Authentication in the Azure Web App (Portal > Your Web App > Authentication):
@@ -87,7 +91,7 @@ What the script does:
 - Assigns System Assigned Managed Identity to the Web App
 - Configures app settings (Azure OpenAI endpoint, deployment, API version)
 - Enables App Service Authentication
-- Builds a zip from the repo root (excluding `.git`, `.venv`, `flask-azure-openai-app`) and deploys
+- Builds a zip from the repo root (excluding `.git`, `.venv`) and deploys
 
 ## Deploy with GitHub Actions (CI/CD)
 This repo includes `.github/workflows/deploy.yml` to build and deploy on push to `master`.
@@ -99,7 +103,7 @@ Set the following GitHub Secrets in your repository:
 
 Workflow summary:
 - Checks out code, sets up Python, installs root requirements
-- Zips the root app (excludes `.git`, `.venv`, `flask-azure-openai-app`) and deploys with `azure/webapps-deploy`
+- Zips the root app (excludes `.git`, `.venv`) and deploys with `azure/webapps-deploy`
 - Ensures app settings are configured prior to deploy
 
 ## Health and Troubleshooting
