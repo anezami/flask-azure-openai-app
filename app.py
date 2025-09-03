@@ -66,10 +66,29 @@ def create_app():
             return {'name': name, 'email': name, 'id': None, 'picture': None}
         return None
 
+    def is_email_allowed(user: Optional[Dict[str, Any]]) -> bool:
+        """
+        Enforce an application-level email allowlist. The list is provided via
+        the ALLOWED_EMAILS app setting (comma-separated). If ALLOWED_EMAILS is empty,
+        all authenticated users are allowed. When DISABLE_AUTH=true, always allow.
+        """
+        if os.getenv('DISABLE_AUTH', 'false').lower() == 'true':
+            return True
+        allowed = [e.strip().lower() for e in os.getenv('ALLOWED_EMAILS', '').split(',') if e.strip()]
+        if not allowed:
+            return True  # no restriction
+        if not user:
+            return False
+        email = (user.get('email') or '').lower()
+        return email in allowed
+
     # Home page: single-page interface
     @app.route('/', methods=['GET'])
     def index():
         user = get_authenticated_user()
+        if not is_email_allowed(user):
+            # If running locally without Easy Auth, permit bypass with DISABLE_AUTH=true
+            return render_template('access_denied.html', disable_auth=(os.getenv('DISABLE_AUTH', 'false').lower() == 'true')), 403
         lang = session.get('ui_lang', os.getenv('UI_LANG', 'en'))
         strings = get_strings(lang)
         return render_template('index.html',
@@ -88,6 +107,9 @@ def create_app():
         return _handle_submit()
 
     def _handle_submit():
+        user = get_authenticated_user()
+        if not is_email_allowed(user):
+            return render_template('access_denied.html', disable_auth=(os.getenv('DISABLE_AUTH', 'false').lower() == 'true')), 403
         text_input = request.form.get('text', '').strip()
         mode = request.form.get('mode', 'grammar')  # default to grammar
         translate_mode = mode == 'translate'
@@ -211,7 +233,7 @@ def create_app():
         })
         session['history'] = history
 
-        user = get_authenticated_user()
+    # user already resolved above for allowlist
         lang = session.get('ui_lang', os.getenv('UI_LANG', 'en'))
         strings = get_strings(lang)
         return render_template('index.html',

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "swedencentral"
+    },
+    "appName": {
+      "value": "kz25aoaiapp"
+    },
+    "sku": {
+      "value": "B1"
+    },
+    "googleClientId": {
+      "value": "id.apps.googleusercontent.com"
+    },
+    "googleClientSecret": {
+      "value": "GOCSPX-XXXXXXXXXXXXXXXXXXXX"
+    },
+    "keyVaultName": {
+      "value": "kvaoaikzapp"
+    },
+    "allowedEmails": {
+      "value": "aa@gmail.com"
+    },
+    "extraAppSettings": {
+      "value": {
+        "AZURE_OPENAI_ENDPOINT": "https://xxx.cognitiveservices.azure.com/",
+        "AZURE_OPENAI_DEPLOYMENT": "gpt-4o",
+        "FLASK_SECRET_KEY": "y6Qk2yYw4y8X7ZrH0pWl9dQe8sS3fK1tVn5gC2aR7jL9mP3bD6uE1hJ4oN8xT5"
+      }
+    }
+  }
+}

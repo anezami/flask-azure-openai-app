@@ -1,3 +1,58 @@
+# ChatGPTKZ2
+
+## Deploy to Azure Web App (with Google Auth)
+
+This repo includes infrastructure as code (Bicep) and a PowerShell script to provision and deploy an Azure Linux Web App with built-in authentication configured for Google, and an Azure Key Vault to store Google credentials. The script also grants the web app’s system-managed identity access to your Azure OpenAI resource.
+
+### Prerequisites
+- Azure CLI installed and logged in: `az login`
+- Subscription ID
+- A Google OAuth Client (Client ID and Client Secret).
+	- Authorized redirect URI: `https://<app-name>.azurewebsites.net/.auth/login/google/callback`
+
+### One-time: Provision infra + deploy code
+
+1) Customize `infra/azuredeploy.parameters.json` with your values or pass them via the script.
+
+2) Run the deployment script from repo root (PowerShell):
+
+```powershell
+$sub = "<SUBSCRIPTION_ID>"
+$rg  = "<RESOURCE_GROUP>"
+$loc = "westeurope"
+$app = "<your-unique-app-name>"
+
+$googleClientId = "<GOOGLE_CLIENT_ID>"
+$googleClientSecret = "<GOOGLE_CLIENT_SECRET>"  # Stored into Key Vault automatically
+$keyVaultName = "<unique-kv-name>"
+
+$aoaiEndpoint = "<https://your-aoai-endpoint.openai.azure.com>"
+$aoaiDeployment = "<your-aoai-deployment>"
+# Optional: if you know the exact Azure OpenAI resource ID, set it for deterministic RBAC assignment
+$aoaiResourceId = "/subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microsoft.CognitiveServices/accounts/<AOAI_ACCOUNT_NAME>"
+
+./scripts/deploy.ps1 `
+	-SubscriptionId $sub `
+	-ResourceGroup $rg `
+	-Location $loc `
+	-AppName $app `
+	-GoogleClientId $googleClientId `
+	-GoogleClientSecret $googleClientSecret `
+	-KeyVaultName $keyVaultName `
+	-AzureOpenAIEndpoint $aoaiEndpoint `
+	-AzureOpenAIDeployment $aoaiDeployment `
+    -AzureOpenAIResourceId $aoaiResourceId `
+	-AllowedEmails "user1@example.com,user2@example.com" `
+	-Sku B1
+```
+
+Re-running the script is safe (idempotent). It uses ARM/Bicep deployment and Zip Deploy for the app code.
+
+### Secrets & RBAC
+- Google Client ID and Secret are stored in Key Vault and injected via Key Vault references (`GOOGLE_CLIENT_ID`, `GOOGLE_PROVIDER_AUTHENTICATION_SECRET`).
+- The web app’s system-assigned identity is granted Key Vault Secrets User on the new vault.
+- The script attempts to assign the web app identity the `Cognitive Services OpenAI User` RBAC role on your Azure OpenAI resource. Provide `-AzureOpenAIResourceId` for the most reliable assignment; otherwise it will try to infer the resource from the endpoint or by listing in the resource group.
+
 # Text Assistant (Grammar & Translation) — Flask + Azure OpenAI (Managed Identity)
 
 Single-page Flask app for grammar correction and translation powered by Azure OpenAI (GPT-4o). The app trusts Azure App Service built-in authentication (e.g., Google, Microsoft Entra ID) and authenticates to Azure OpenAI using System Assigned Managed Identity via `DefaultAzureCredential`.
