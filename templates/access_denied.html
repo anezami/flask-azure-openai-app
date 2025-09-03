@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Access Denied</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    .container { max-width: 720px; margin: 3rem auto; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h2>Access denied</h2>
+    <p>This application is restricted to specific Google accounts. If you believe this is an error, contact the owner.</p>
+    <details>
+      <summary>Troubleshooting</summary>
+      <ul>
+        <li>Make sure you are signing in with an allowed email address.</li>
+        <li>If you switched networks or browsers, try again.</li>
+      </ul>
+    </details>
+    <p><a href="/">Return to home</a></p>
+    {% if disable_auth %}
+      <p><small>Note: Local mode is enabled. Set DISABLE_AUTH=false to enforce login.</small></p>
+    {% endif %}
+  </main>
+</body>
+</html>

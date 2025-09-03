@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ strings.app_title }}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    .container { max-width: 960px; margin: 2rem auto; }
+    .result { white-space: pre-wrap; background: #f7f7f9; padding: 1rem; border-radius: 8px; }
+    .history { font-size: 0.9rem; color: #555; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; vertical-align: middle; }
+    /* Loading overlay */
+    #loadingOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 9999; }
+    .spinner { width: 48px; height: 48px; border: 4px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.9s linear infinite; margin: 0 auto 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-box { color: #fff; text-align: center; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <div id="loadingOverlay">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <div>{{ strings.loading }}</div>
+    </div>
+  </div>
+  <main class="container">
+    <header style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1rem;">
+      <h2 style="margin:0;">{{ strings.app_heading }}</h2>
+      <div style="display:flex; align-items:center; gap:1rem;">
+        {% if user %}
+          <div style="display:flex; align-items:center; gap:0.5rem;">
+            <img src="{{ user.picture }}" alt="avatar" class="avatar">
+            <span>{{ user.name }}</span>
+          </div>
+          <a role="button" href="/logout" style="font-size:0.9rem;">{{ strings.logout }}</a>
+        {% else %}
+          <a role="button" href="/login">{{ strings.login }}</a>
+        {% endif %}
+        {% if disable_auth %}
+          <span style="padding:2px 6px; background:#eee; border-radius:6px; font-size:12px;">{{ strings.local_mode }}</span>
+        {% endif %}
+        <form method="post" action="/set-lang" style="display:flex; align-items:center; gap:0.5rem;">
+          <label for="lang" style="margin:0; font-size:0.9rem;">{{ strings.language }}</label>
+          <select id="lang" name="lang" onchange="this.form.submit()" style="font-size:0.9rem;">
+            <option value="en" {% if ui_lang == 'en' %}selected{% endif %}>{{ strings.english }}</option>
+            <option value="de" {% if ui_lang == 'de' %}selected{% endif %}>{{ strings.german }}</option>
+          </select>
+        </form>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div id="flashMessages">
+          {% for category, message in messages %}
+            <article class="{{ category }}">{{ message }}</article>
+          {% endfor %}
+        </div>
+        <script>
+          // Auto-hide flash messages after 10 seconds
+          setTimeout(function() {
+            const flashDiv = document.getElementById('flashMessages');
+            if (flashDiv) {
+              flashDiv.style.transition = 'opacity 0.5s';
+              flashDiv.style.opacity = '0';
+              setTimeout(() => flashDiv.remove(), 500);
+            }
+          }, 10000);
+        </script>
+      {% endif %}
+    {% endwith %}
+
+  <form id="mainForm" method="post" action="/process" enctype="multipart/form-data">
+      <fieldset style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+        <label for="mode" style="margin:0;">{{ strings.mode_label }}</label>
+        <select id="mode" name="mode" style="min-width:150px;">
+          <option value="grammar" {% if mode != 'translate' %}selected{% endif %}>{{ strings.mode_grammar }}</option>
+          <option value="translate" {% if mode == 'translate' %}selected{% endif %}>{{ strings.mode_translation }}</option>
+        </select>
+        <div id="translationOptions" style="display:none; align-items:center; gap:0.5rem;">
+          <label for="target_language" style="margin:0;">{{ strings.target_language }}</label>
+          <select id="target_language" name="target_language" data-selected="{{ target_lang or '' }}">
+            <option value="" disabled {% if not target_lang %}selected{% endif %}>--</option>
+          </select>
+          <small>{{ strings.detected_source_lang }}: <strong>{{ source_lang or strings.n_a }}</strong></small>
+        </div>
+      </fieldset>
+
+  <label for="text">{{ strings.enter_text }}</label>
+  <textarea id="text" name="text" rows="10" placeholder="{{ strings.text_placeholder }}"></textarea>
+
+  <label for="file">{{ strings.file_label }}</label>
+  <input type="file" id="file" name="file" accept=".txt,.md,.docx,.pdf" style="display:none;">
+  <div style="display:flex; align-items:center; gap:0.75rem;">
+    <button type="button" onclick="document.getElementById('file').click()">{{ strings.choose_file }}</button>
+    <span id="fileName" style="color:#888;">{{ strings.no_file }}</span>
+  </div>
+  <small>{{ strings.upload_note }}</small>
+
+      
+
+  <button type="submit">{{ strings.process }}</button>
+    </form>
+
+    {% if stats %}
+    <h3>{{ strings.stats }}</h3>
+    <ul>
+      <li>{{ strings.detected_source_lang }}: <strong>{{ stats.source_lang }}</strong></li>
+      <li>{{ strings.lines }}: {{ stats.lines }}</li>
+      <li>{{ strings.words }}: {{ stats.words }}</li>
+      <li>{{ strings.characters }}: {{ stats.characters }}</li>
+    </ul>
+    <h4>{{ strings.input_text }}</h4>
+    <div class="result">{{ input_preview }}</div>
+    {% endif %}
+
+    {% if result %}
+  <h3>{{ strings.output }}</h3>
+      <div class="result">{{ result }}</div>
+    {% endif %}
+
+
+  </main>
+
+  <script>
+  const modeSelect = document.getElementById('mode');
+  const options = document.getElementById('translationOptions');
+  const fileInput = document.getElementById('file');
+  const fileName = document.getElementById('fileName');
+  const targetSelect = document.getElementById('target_language');
+  const overlay = document.getElementById('loadingOverlay');
+  const form = document.getElementById('mainForm');
+
+    function syncOptions() {
+      if (!options) return;
+      options.style.display = modeSelect.value === 'translate' ? 'flex' : 'none';
+    }
+
+    // Initialize on page load
+    syncOptions();
+    {% if mode == 'translate' %}
+    if (options) options.style.display = 'flex';
+    {% endif %}
+
+    modeSelect.addEventListener('change', syncOptions);
+    fileInput.addEventListener('change', () => {
+      fileName.textContent = fileInput.files && fileInput.files.length ? fileInput.files[0].name : '{{ strings.no_file }}';
+    });
+    // Populate languages from static file
+  async function loadLanguages() {
+      try {
+        const res = await fetch('/static/languages.json');
+        if (!res.ok) return;
+  const langs = await res.json();
+    const selected = targetSelect?.dataset?.selected || '';
+        for (const name of langs) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (selected && selected === name) opt.selected = true;
+          targetSelect.appendChild(opt);
+        }
+      } catch {}
+    }
+    
+    // Initialize on load
+    syncOptions();
+    loadLanguages();
+  form?.addEventListener('submit', () => { if (overlay) overlay.style.display = 'flex'; });
+  </script>
+</body>
+</html>
