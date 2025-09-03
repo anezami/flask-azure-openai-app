@@ -12,7 +12,7 @@ This repo includes infrastructure as code (Bicep) and a PowerShell script to pro
 
 ### One-time: Provision infra + deploy code
 
-1) Customize `infra/azuredeploy.parameters.json` with your values or pass them via the script.
+1) Optional: Customize `infra/azuredeploy.parameters.json` with your values. The script also accepts parameters directly and generates a parameters file on the fly.
 
 2) Run the deployment script from repo root (PowerShell):
 
@@ -46,7 +46,7 @@ $aoaiResourceId = "/subscriptions/<SUB_ID>/resourceGroups/<RG>/providers/Microso
 	-Sku B1
 ```
 
-Re-running the script is safe (idempotent). It uses ARM/Bicep deployment and Zip Deploy for the app code.
+Re-running the script is safe (idempotent). It uses ARM/Bicep deployment and `az webapp deploy` (OneDeploy) for the app code.
 
 ### Secrets & RBAC
 - Google Client ID and Secret are stored in Key Vault and injected via Key Vault references (`GOOGLE_CLIENT_ID`, `GOOGLE_PROVIDER_AUTHENTICATION_SECRET`).
@@ -124,9 +124,9 @@ python .\scripts\live_test_aoai.py
 ```
 
 ## Azure Web App Built-in Authentication
-Configure Authentication in the Azure Web App (Portal > Your Web App > Authentication):
-- Add an Identity Provider (e.g., Google) and set action to "Log in with..."; unauthenticated action: "Redirect to login page".
-- The app reads user info from `X-MS-CLIENT-PRINCIPAL` headers injected by App Service.
+Authentication is configured automatically by the Bicep template for Google (Easy Auth v2). Ensure your Google OAuth app has the authorized redirect URI set to `https://<app-name>.azurewebsites.net/.auth/login/google/callback`.
+
+At runtime, the app reads user info from `X-MS-CLIENT-PRINCIPAL` headers injected by App Service. Access is further restricted by the `ALLOWED_EMAILS` app setting (a comma-separated allowlist), which the script can set for you via `-AllowedEmails`.
 
 ## Deploy to Azure (Script)
 Use the provided PowerShell script to provision (or reuse) resources and deploy the root app:
@@ -146,20 +146,20 @@ What the script does:
 - Assigns System Assigned Managed Identity to the Web App
 - Configures app settings (Azure OpenAI endpoint, deployment, API version)
 - Enables App Service Authentication
-- Builds a zip from the repo root (excluding `.git`, `.venv`) and deploys
+- Builds a zip from the repo root (including `templates/` and `static/`) and deploys with `az webapp deploy`
 
-## Deploy with GitHub Actions (CI/CD)
-This repo includes `.github/workflows/deploy.yml` to build and deploy on push to `master`.
+## Deploy with GitHub Actions (CI/CD) – Optional
+This repository does not include a workflow by default. You can add one to package the root app and deploy using `az webapp deploy` (or the `azure/webapps-deploy` action).
 
-Set the following GitHub Secrets in your repository:
-- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (for Azure login via OIDC)
+Recommended GitHub Secrets:
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (OIDC for Azure login)
 - `AZURE_WEBAPP_NAME`, `AZURE_RESOURCE_GROUP`
 - `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
 
-Workflow summary:
-- Checks out code, sets up Python, installs root requirements
-- Zips the root app (excludes `.git`, `.venv`) and deploys with `azure/webapps-deploy`
-- Ensures app settings are configured prior to deploy
+Typical workflow steps:
+- Checkout, setup Python, install requirements
+- Zip the root app (include `templates/` and `static/`)
+- Deploy to Azure Web App
 
 ## Health and Troubleshooting
 - Health probe endpoint: `GET /health` returns `{ "status": "ok" }`
