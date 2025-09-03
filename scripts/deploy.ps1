@@ -103,26 +103,24 @@ Write-Host "Configuring startup command..."
 az webapp config set -g $ResourceGroup -n $AppName --startup-file 'gunicorn --bind=0.0.0.0:$PORT app:app' --output none
 
 Write-Host "Creating deployment zip..."
-$zipPath = Join-Path $PWD "app.zip"
+# Always package from repository root (parent of scripts folder) so templates/ and static/ are included
+$repoRoot = (Join-Path $PSScriptRoot '..' | Resolve-Path).Path
+$zipPath = Join-Path $repoRoot "app.zip"
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
-$rootPath = $PWD.Path
-Get-ChildItem -Recurse -File | Where-Object {
-  $_.FullName -ne $zipPath -and
-  $_.FullName -notmatch "\\.git\\" -and
-  $_.FullName -notmatch "\\.venv\\" -and
-  $_.FullName -notmatch "flask-azure-openai-app\\" -and
-  $_.FullName -notmatch "__pycache__\\"
-} | ForEach-Object {
-  $rel = $_.FullName.Substring($rootPath.Length + 1)
-  [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $rel)
+# Include essential app files and folders
+$include = @('app.py','auth.py','azure_openai_client.py','chunking.py','i18n.py','requirements.txt','startup.cmd','web.config','templates','static')
+Push-Location $repoRoot
+try {
+  Compress-Archive -Path $include -DestinationPath $zipPath -Force
+} finally {
+  Pop-Location
 }
-$zip.Dispose()
 
-Write-Host "Zip deploying to Web App..."
-az webapp deployment source config-zip -g $ResourceGroup -n $AppName --src $zipPath --output none
+Write-Host "Deploying zip to Web App using 'az webapp deploy'..."
+# Brief delay to avoid SCM restart conflicts with immediate config changes
+Start-Sleep -Seconds 5
+az webapp deploy --resource-group $ResourceGroup --name $AppName --type zip --src-path $zipPath --async false --output table | Out-Null
 
 Write-Host "Deployment complete: https://$AppName.azurewebsites.net"
 

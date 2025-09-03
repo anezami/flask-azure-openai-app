@@ -9,6 +9,13 @@ ENV/
 .env
 uploads/
 
+# Build/deploy artifacts
+*.zip
+scripts/appbundle.zip
+app.zip
+site-logs.zip
+logs_extract/
+
 # VSCode
 .vscode/
 

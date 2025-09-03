@@ -47,6 +47,10 @@ param extraAppSettings object = {}
 
 var planName = '${appName}-plan'
 
+// Versionless Key Vault Secret URIs (always resolve to latest version)
+var googleClientSecretUri = '${kv.properties.vaultUri}secrets/google-client-secret'
+var googleClientIdUri = '${kv.properties.vaultUri}secrets/google-client-id'
+
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
@@ -143,11 +147,11 @@ resource appSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     AZURE_OPENAI_API_VERSION: '2024-06-01'
 
     // Google secret is stored in an app setting whose name is provided by googleClientSecretSettingName.
-    // Use Key Vault reference so the secret value isn't stored in App Settings.
-    GOOGLE_PROVIDER_AUTHENTICATION_SECRET: '@Microsoft.KeyVault(SecretUri=${kvGoogleClientSecret.properties.secretUriWithVersion})'
+    // Use Key Vault reference (versionless) so it always resolves to the latest secret version.
+  GOOGLE_PROVIDER_AUTHENTICATION_SECRET: '@Microsoft.KeyVault(SecretUri=${googleClientSecretUri})'
 
-    // Also expose client id as an app setting (from Key Vault) for app code if needed
-    GOOGLE_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${kvGoogleClientId.properties.secretUriWithVersion})'
+    // Also expose client id as an app setting (from Key Vault) for app code if needed (versionless)
+    GOOGLE_CLIENT_ID: '@Microsoft.KeyVault(SecretUri=${googleClientIdUri})'
   }, extraAppSettings)
 }
 
