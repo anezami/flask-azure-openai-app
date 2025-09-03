@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: flask-azure-openai-app   # change to your Web App name
+  AZURE_WEBAPP_NAME: flask-aoai-web-anezami   # Azure Web App name
 
 jobs:
   build-and-deploy:
