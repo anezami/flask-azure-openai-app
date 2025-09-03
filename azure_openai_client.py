@@ -3,12 +3,12 @@ from typing import Optional
 
 import httpx
 from openai import AzureOpenAI
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 # Notes:
 # - This module wraps Azure OpenAI Chat Completions calls using the 'openai' SDK v1+ with Azure endpoints.
 # - Environment variables required:
 #   AZURE_OPENAI_ENDPOINT: e.g., https://<your-ai-foundry-endpoint>.openai.azure.com/
-#   AZURE_OPENAI_API_KEY: your API key
 #   AZURE_OPENAI_DEPLOYMENT: the deployment name for gpt-4o
 #   AZURE_OPENAI_API_VERSION: e.g., 2024-06-01
 
@@ -19,17 +19,18 @@ def get_client() -> AzureOpenAI:
     global _client
     if _client is None:
         endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
-        api_key = os.getenv('AZURE_OPENAI_API_KEY')
         api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-06-01')
-        if not endpoint or not api_key:
-            raise RuntimeError('Missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY')
-        # Build a dedicated HTTP client to avoid SDK constructing httpx.Client with unsupported args in some envs
+        if not endpoint:
+            raise RuntimeError('Missing AZURE_OPENAI_ENDPOINT')
+        # Managed Identity token provider
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
         timeout = float(os.getenv('AOAI_HTTP_TIMEOUT', '60'))
         http_client = httpx.Client(timeout=timeout)
         _client = AzureOpenAI(
             azure_endpoint=endpoint,
-            api_key=api_key,
             api_version=api_version,
+            azure_ad_token_provider=token_provider,
             http_client=http_client,
         )
     return _client

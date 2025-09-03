@@ -1,40 +1,35 @@
-# Text Assistant (Grammar & Translation) — Flask + Azure OpenAI
+# Text Assistant (Grammar & Translation) — Flask + Azure OpenAI (Managed Identity)
 
-Single-page Flask app for grammar correction and translation powered by Azure OpenAI (GPT-4o), with Google OAuth login, file upload, chunking for large texts, and UI localization (English/German).
+Single-page Flask app for grammar correction and translation powered by Azure OpenAI (GPT-4o). The app trusts Azure App Service built-in authentication (e.g., Google, Microsoft Entra ID) and authenticates to Azure OpenAI using System Assigned Managed Identity via `DefaultAzureCredential`.
+
+Note: The folder `flask-azure-openai-app` is deprecated and kept temporarily; use the app at the repository root.
 
 ## Features
 - Single-page UI with:
-  - Text input and file upload (`.txt`, `.md`, `.docx`, `.pdf`)
-  - Mode selection dropdown: `Grammar Check` (default) or `Translation`
-  - Auto-detect source language; when in Translation mode, choose a target language
-  - Language selector (UI locale) on the top-right: English/German
+	- Text input and file upload (`.txt`, `.md`, `.docx`, `.pdf`)
+	- Mode selection dropdown: `Grammar Check` (default) or `Translation`
+	- Auto-detect source language; in Translation mode, choose a target language
+	- Language selector (UI locale): English/German
 - Azure OpenAI GPT-4o via the official `openai` SDK (Azure endpoint)
 - Chunking for large inputs to respect token budgets
-- Google OAuth with optional email allowlist
-- Azure App Service–ready (`requirements.txt`, `startup.cmd`, `web.config`)
+- No custom auth code: App trusts Azure App Service auth headers
+- Ready for Azure App Service Linux with CI/CD via GitHub Actions
 
-Notes:
-- Preview and session-history UI have been removed for a cleaner experience. The app does not persist data; uploaded files are deleted immediately after processing.
+## Prerequisites
+- Azure subscription with permission to create Resource Groups, App Service Plans, and Web Apps
+- Azure CLI installed and logged in (`az login`)
+- GitHub account and repository (for CI/CD)
+- An Azure OpenAI resource and a model deployment name (e.g., `gpt-4o`)
 
 ## Environment Variables
-Create a `.env` for local development or configure App Settings in Azure. Relevant variables:
+Create a `.env` in the repo root for local development or configure App Settings in Azure:
 
 ```
 # Flask
 FLASK_SECRET_KEY=your-random-secret
-SESSION_COOKIE_SECURE=false           # true in production
-SESSION_COOKIE_SAMESITE=Lax
 
-# Google OAuth
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-OAUTH_REDIRECT_URI=https://<your-app>.azurewebsites.net/auth/callback
-ALLOWED_GOOGLE_EMAILS=alice@contoso.com,bob@contoso.com   # optional allowlist (comma-separated). If empty, allow all.
-DISABLE_AUTH=false                   # set to true to bypass login locally
-
-# Azure OpenAI
+# Azure OpenAI (Managed Identity)
 AZURE_OPENAI_ENDPOINT=https://<your-ai-foundry-endpoint>.openai.azure.com/
-AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_API_VERSION=2024-06-01
 
@@ -49,46 +44,70 @@ TIKTOKEN_ENCODING=o200k_base
 UI_LANG=en  # default UI language if session not set (en|de)
 ```
 
+No API keys are required. The Web App will use its System Assigned Managed Identity to call Azure OpenAI. Grant this identity access in Azure AI Foundry (Cognitive Services User role on the resource).
+
 ## Run Locally (Windows PowerShell)
 ```pwsh
-# From project root
+# From repo root
 python -m venv .venv
-./.venv/Scripts/Activate.ps1
+& .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# Create .env (see the Environment Variables section). For local OAuth callback, use:
-# OAUTH_REDIRECT_URI=http://localhost:8000/auth/callback
+# Local env; `az login` recommended so DefaultAzureCredential can acquire a token
+$env:AZURE_OPENAI_ENDPOINT="https://<your-ai-foundry-endpoint>.openai.azure.com/"
+$env:AZURE_OPENAI_DEPLOYMENT="gpt-4o"
+$env:AZURE_OPENAI_API_VERSION="2024-06-01"
+$env:DISABLE_AUTH="true"  # App Service auth headers don’t exist locally
 
-# Optionally bypass Google login during local dev
-# set in .env: DISABLE_AUTH=true
-
+python .\scripts\smoke_test.py
 python app.py
 ```
 Browse `http://localhost:8000`.
 
-## Google OAuth Setup (summary)
-1. In Google Cloud Console, create OAuth 2.0 credentials (Web application).
-2. Authorized redirect URI (local): `http://localhost:8000/auth/callback`
-3. Authorized redirect URI (prod): `https://<your-app>.azurewebsites.net/auth/callback`
-4. Put `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `OAUTH_REDIRECT_URI` into your environment.
-5. Optionally set `ALLOWED_GOOGLE_EMAILS` to restrict access.
+## Azure Web App Built-in Authentication
+Configure Authentication in the Azure Web App (Portal > Your Web App > Authentication):
+- Add an Identity Provider (e.g., Google) and set action to "Log in with..."; unauthenticated action: "Redirect to login page".
+- The app reads user info from `X-MS-CLIENT-PRINCIPAL` headers injected by App Service.
 
-## Deploy to Azure App Service
-- Create an App Service (Windows or Linux). This repo includes `startup.cmd` and `web.config` for Windows deployments.
-- Configure the environment variables from the section above.
-- For Linux, a typical startup command is:
-  ```bash
-  python -m waitress --listen=0.0.0.0:$PORT app:app
-  ```
-- Deploy via GitHub Actions or Zip Deploy. The WSGI entrypoint is `app:app`.
-- Health probe endpoint: `GET /health` returns `{"status":"ok"}`.
+## Deploy to Azure (Script)
+Use the provided PowerShell script to provision (or reuse) resources and deploy the root app:
+
+```pwsh
+./scripts/deploy.ps1 `
+	-SubscriptionId <SUB_ID> `
+	-ResourceGroup <RG_NAME> `
+	-Location westeurope `
+	-AppName <APP_NAME> `
+	-AzureOpenAIEndpoint https://<your-ai-foundry-endpoint>.openai.azure.com/ `
+	-AzureOpenAIDeployment gpt-4o
+```
+
+What the script does:
+- Ensures Resource Group, App Service Plan (Linux), and Web App exist
+- Assigns System Assigned Managed Identity to the Web App
+- Configures app settings (Azure OpenAI endpoint, deployment, API version)
+- Enables App Service Authentication
+- Builds a zip from the repo root (excluding `.git`, `.venv`, `flask-azure-openai-app`) and deploys
+
+## Deploy with GitHub Actions (CI/CD)
+This repo includes `.github/workflows/deploy.yml` to build and deploy on push to `master`.
+
+Set the following GitHub Secrets in your repository:
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (for Azure login via OIDC)
+- `AZURE_WEBAPP_NAME`, `AZURE_RESOURCE_GROUP`
+- `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`
+
+Workflow summary:
+- Checks out code, sets up Python, installs root requirements
+- Zips the root app (excludes `.git`, `.venv`, `flask-azure-openai-app`) and deploys with `azure/webapps-deploy`
+- Ensures app settings are configured prior to deploy
+
+## Health and Troubleshooting
+- Health probe endpoint: `GET /health` returns `{ "status": "ok" }`
+- If you see 401s, ensure App Service Authentication is configured and identity provider is set up
+- For Azure OpenAI authorization errors, grant the Web App’s System Assigned Managed Identity the "Cognitive Services User" role on the Azure OpenAI resource
+- For local runs, ensure `az login` so `DefaultAzureCredential` can obtain a token
 
 ## Security & Privacy
-- Strongly set `FLASK_SECRET_KEY` and enable `SESSION_COOKIE_SECURE=true` behind HTTPS.
-- The app stores no persistent user data. Temporary uploads are deleted after processing.
-- Use `ALLOWED_GOOGLE_EMAILS` to restrict access by email domain/account.
-
-## Troubleshooting
-- OAuth callback issues: ensure `OAUTH_REDIRECT_URI` matches exactly in Google Console and environment.
-- Azure OpenAI errors: verify `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`.
-- Large files: tune `MAX_INPUT_TOKENS`, `MAX_OUTPUT_TOKENS`, and `TIKTOKEN_ENCODING`.
+- Set a strong `FLASK_SECRET_KEY`
+- App does not persist user data; uploads are deleted immediately after processing

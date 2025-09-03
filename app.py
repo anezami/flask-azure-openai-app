@@ -1,8 +1,10 @@
 import os
+import base64
+import json
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, get_flashed_messages
 from werkzeug.utils import secure_filename
-from typing import Optional
+from typing import Optional, Dict, Any
 
 # Load .env for local development only
 try:
@@ -11,7 +13,6 @@ try:
 except Exception:
     pass
 
-from auth import init_oauth, require_login, oauth, is_email_allowed
 from azure_openai_client import call_chat_completion
 from chunking import chunk_text_by_tokens
 from langdetect import detect, DetectorFactory
@@ -37,23 +38,38 @@ def create_app():
     # Secret key for sessions (required). Use a strong random value in production.
     app.secret_key = os.getenv("FLASK_SECRET_KEY", os.urandom(24))
 
-    # Initialize Google OAuth (OIDC)
-    init_oauth(app)
-
     # Upload configuration (text files only)
     app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB upload cap
     app.config['UPLOAD_EXTENSIONS'] = ['.txt', '.md', '.docx', '.pdf']
     app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'uploads')
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+    def get_authenticated_user() -> Optional[Dict[str, Any]]:
+        principal_b64 = request.headers.get('X-MS-CLIENT-PRINCIPAL')
+        if principal_b64:
+            try:
+                data = json.loads(base64.b64decode(principal_b64))
+                claims = {c.get('typ'): c.get('val') for c in data.get('claims', []) if isinstance(c, dict)}
+                name = claims.get('name') or claims.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name')
+                email = claims.get('emails') or claims.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress')
+                user_id = claims.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier')
+                return {
+                    'name': name or email or 'Authenticated User',
+                    'email': email or claims.get('preferred_username'),
+                    'id': user_id,
+                    'picture': None,
+                }
+            except Exception:
+                pass
+        name = request.headers.get('X-MS-CLIENT-PRINCIPAL-NAME')
+        if name:
+            return {'name': name, 'email': name, 'id': None, 'picture': None}
+        return None
+
     # Home page: single-page interface
     @app.route('/', methods=['GET'])
-    @require_login
     def index():
-        disable_auth = os.getenv('DISABLE_AUTH', 'false').lower() == 'true'
-        user = session.get('user')
-        if disable_auth and not user:
-            user = {'name': 'Local User', 'email': 'local@example.com', 'picture': 'https://via.placeholder.com/32'}
+        user = get_authenticated_user()
         lang = session.get('ui_lang', os.getenv('UI_LANG', 'en'))
         strings = get_strings(lang)
         return render_template('index.html',
@@ -63,13 +79,11 @@ def create_app():
                                target_lang=None,
                                mode=session.get('mode', 'grammar'),  # default to grammar
                                history=session.get('history', []),
-                               disable_auth=disable_auth,
                                strings=strings,
                                ui_lang=lang)
 
     # Handle submission for grammar check or translation
     @app.route('/process', methods=['POST'])
-    @require_login
     def process():
         return _handle_submit()
 
@@ -197,10 +211,7 @@ def create_app():
         })
         session['history'] = history
 
-        disable_auth = os.getenv('DISABLE_AUTH', 'false').lower() == 'true'
-        user = session.get('user')
-        if disable_auth and not user:
-            user = {'name': 'Local User', 'email': 'local@example.com', 'picture': 'https://via.placeholder.com/32'}
+        user = get_authenticated_user()
         lang = session.get('ui_lang', os.getenv('UI_LANG', 'en'))
         strings = get_strings(lang)
         return render_template('index.html',
@@ -210,85 +221,8 @@ def create_app():
                                target_lang=target_language if translate_mode else None,
                                mode=mode,
                                history=history,
-                               disable_auth=disable_auth,
                                strings=strings,
                                ui_lang=lang)
-
-    # Auth routes
-    @app.route('/login')
-    def login():
-        redirect_uri = os.getenv('OAUTH_REDIRECT_URI') or url_for('auth_callback', _external=True)
-        if not redirect_uri:
-            app.logger.error('OAUTH_REDIRECT_URI not configured and url_for failed to build absolute URL')
-        return oauth.google.authorize_redirect(redirect_uri)
-
-    @app.route('/auth/callback')
-    def auth_callback():
-        print(f"\n=== OAUTH CALLBACK DEBUG ===")
-        print(f"Request args: {dict(request.args)}")
-        print(f"Request form: {dict(request.form)}")
-        print(f"Session keys: {list(session.keys())}")
-        
-        # Check for error parameter from Google
-        if 'error' in request.args:
-            error = request.args.get('error')
-            error_desc = request.args.get('error_description', 'No description')
-            print(f"Google OAuth error: {error} - {error_desc}")
-            flash(f'Google OAuth error: {error}', 'error')
-            return redirect(url_for('index'))
-        
-        # Check for required parameters
-        if 'code' not in request.args:
-            print("Missing 'code' parameter in callback")
-            flash('OAuth callback missing authorization code', 'error')
-            return redirect(url_for('index'))
-            
-        try:
-            print("Attempting token exchange...")
-            token = oauth.google.authorize_access_token()
-            print(f"Token keys: {list(token.keys()) if token else 'None'}")
-            
-            print("Attempting to get userinfo from userinfo endpoint...")
-            # Use the userinfo endpoint instead of parsing ID token to avoid nonce issues
-            userinfo_response = oauth.google.get('https://www.googleapis.com/oauth2/v2/userinfo', token=token)
-            userinfo = userinfo_response.json()
-            print(f"Userinfo from endpoint: {userinfo}")
-            
-            if userinfo and userinfo.get('email'):
-                session['user'] = {
-                    'name': userinfo.get('name'),
-                    'email': userinfo.get('email'),
-                    'picture': userinfo.get('picture')
-                }
-                session['history'] = []
-                
-                email = userinfo.get('email', '').lower()
-                print(f"Email from userinfo: {email}")
-                
-                if not is_email_allowed(email):
-                    print(f"Email not in allowlist: {email}")
-                    session.clear()
-                    return redirect(url_for('access_denied'))
-                    
-                print("Login successful, redirecting to index")
-                return redirect(url_for('index'))
-            else:
-                print("No email in userinfo")
-                flash('Login failed: no email received', 'error')
-                return redirect(url_for('index'))
-                
-        except Exception as e:
-            print(f"Exception in OAuth callback: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            flash(f'Login failed: {str(e)}', 'error')
-            return redirect(url_for('index'))
-
-    @app.route('/logout')
-    def logout():
-        session.clear()
-        flash('You have been logged out.', 'info')
-        return redirect(url_for('index'))
 
     @app.route('/clear-messages')
     def clear_messages():
@@ -296,22 +230,7 @@ def create_app():
         get_flashed_messages()
         return redirect(url_for('index'))
 
-    @app.route('/access-denied')
-    def access_denied():
-        lang = session.get('ui_lang', os.getenv('UI_LANG', 'en'))
-        strings = get_strings(lang)
-        disable_auth = os.getenv('DISABLE_AUTH', 'false').lower() == 'true'
-        return render_template('access_denied.html', strings=strings, disable_auth=disable_auth), 403
-
-    # Debug route to test OAuth configuration
-    @app.route('/debug-oauth')
-    def debug_oauth():
-        return {
-            'client_id': os.getenv('GOOGLE_CLIENT_ID', 'NOT_SET')[:20] + '...',
-            'redirect_uri': os.getenv('OAUTH_REDIRECT_URI', 'NOT_SET'),
-            'disable_auth': os.getenv('DISABLE_AUTH', 'NOT_SET'),
-            'session_keys': list(session.keys())
-        }
+    # No custom auth-related routes; rely on App Service Authentication
 
     # Health probe (no auth) for quick checks and Azure health probes
     @app.get('/health')

@@ -5,9 +5,6 @@ _translations: Dict[str, Dict[str, str]] = {
     'en': {
         'app_title': 'Text Assistant — Grammar & Translation',
         'app_heading': 'Text Assistant',
-        'login': 'Login with Google',
-        'logout': 'Logout',
-        'local_mode': 'Local mode',
         'mode_label': 'Mode',
         'mode_grammar': 'Grammar Check',
         'mode_translation': 'Translation',
@@ -42,9 +39,6 @@ _translations: Dict[str, Dict[str, str]] = {
     'de': {
         'app_title': 'Text-Assistent — Grammatik & Übersetzung',
         'app_heading': 'Text-Assistent',
-        'login': 'Mit Google anmelden',
-        'logout': 'Abmelden',
-        'local_mode': 'Lokaler Modus',
         'mode_label': 'Modus',
         'mode_grammar': 'Grammatikprüfung',
         'mode_translation': 'Übersetzung',

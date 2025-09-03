@@ -30,15 +30,11 @@
       <div style="display:flex; align-items:center; gap:1rem;">
         {% if user %}
           <div style="display:flex; align-items:center; gap:0.5rem;">
+            {% if user.picture %}
             <img src="{{ user.picture }}" alt="avatar" class="avatar">
+            {% endif %}
             <span>{{ user.name }}</span>
           </div>
-          <a role="button" href="/logout" style="font-size:0.9rem;">{{ strings.logout }}</a>
-        {% else %}
-          <a role="button" href="/login">{{ strings.login }}</a>
-        {% endif %}
-        {% if disable_auth %}
-          <span style="padding:2px 6px; background:#eee; border-radius:6px; font-size:12px;">{{ strings.local_mode }}</span>
         {% endif %}
         <form method="post" action="/set-lang" style="display:flex; align-items:center; gap:0.5rem;">
           <label for="lang" style="margin:0; font-size:0.9rem;">{{ strings.language }}</label>
