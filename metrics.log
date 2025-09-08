@@ -1,0 +1,60 @@
+{"event": "job_started", "mode": "translate", "job_id": "vYvIGNlHLIDt", "chunks": 1}
+{"event": "chunk_processed", "mode": "translate", "job_id": "vYvIGNlHLIDt", "chunk_index": 0, "attempts": 1, "status": "success", "call_duration_secs": 7.168, "total_chunk_duration_secs": 7.168, "error": null}
+{"event": "job_finished", "mode": "translate", "job_id": "vYvIGNlHLIDt", "status": "succeeded", "duration_secs": 7.169}
+{"event": "job_started", "mode": "translate", "job_id": "25NPg3atbA0m", "chunks": 23}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 3, "attempts": 1, "status": "success", "call_duration_secs": 0.967, "total_chunk_duration_secs": 0.967, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 0, "attempts": 1, "status": "success", "call_duration_secs": 1.573, "total_chunk_duration_secs": 1.575, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 5, "attempts": 1, "status": "success", "call_duration_secs": 0.899, "total_chunk_duration_secs": 0.899, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 1, "attempts": 1, "status": "success", "call_duration_secs": 18.707, "total_chunk_duration_secs": 18.707, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 2, "attempts": 1, "status": "success", "call_duration_secs": 20.857, "total_chunk_duration_secs": 20.857, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 4, "attempts": 1, "status": "success", "call_duration_secs": 22.119, "total_chunk_duration_secs": 22.119, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 6, "attempts": 1, "status": "success", "call_duration_secs": 20.956, "total_chunk_duration_secs": 20.956, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 7, "attempts": 1, "status": "success", "call_duration_secs": 43.958, "total_chunk_duration_secs": 43.958, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 8, "attempts": 1, "status": "success", "call_duration_secs": 58.743, "total_chunk_duration_secs": 58.743, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 9, "attempts": 1, "status": "success", "call_duration_secs": 57.18, "total_chunk_duration_secs": 57.18, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 13, "attempts": 1, "status": "success", "call_duration_secs": 1.248, "total_chunk_duration_secs": 1.248, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 11, "attempts": 1, "status": "success", "call_duration_secs": 20.749, "total_chunk_duration_secs": 20.749, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 10, "attempts": 1, "status": "success", "call_duration_secs": 61.502, "total_chunk_duration_secs": 61.502, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 12, "attempts": 1, "status": "success", "call_duration_secs": 22.815, "total_chunk_duration_secs": 22.815, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 14, "attempts": 1, "status": "success", "call_duration_secs": 58.308, "total_chunk_duration_secs": 58.308, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 17, "attempts": 1, "status": "success", "call_duration_secs": 39.572, "total_chunk_duration_secs": 39.572, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 16, "attempts": 1, "status": "success", "call_duration_secs": 57.927, "total_chunk_duration_secs": 57.927, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 15, "attempts": 1, "status": "success", "call_duration_secs": 65.651, "total_chunk_duration_secs": 65.651, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 20, "attempts": 1, "status": "success", "call_duration_secs": 17.814, "total_chunk_duration_secs": 17.814, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 18, "attempts": 1, "status": "success", "call_duration_secs": 21.007, "total_chunk_duration_secs": 21.007, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 22, "attempts": 1, "status": "success", "call_duration_secs": 0.936, "total_chunk_duration_secs": 0.936, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 19, "attempts": 1, "status": "success", "call_duration_secs": 21.254, "total_chunk_duration_secs": 21.254, "error": null}
+{"event": "chunk_processed", "mode": "translate", "job_id": "25NPg3atbA0m", "chunk_index": 21, "attempts": 1, "status": "success", "call_duration_secs": 52.641, "total_chunk_duration_secs": 52.641, "error": null}
+{"event": "job_finished", "mode": "translate", "job_id": "25NPg3atbA0m", "status": "succeeded", "duration_secs": 201.747}
+{"event": "job_started", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunks": 23}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 0, "attempts": 1, "status": "success", "call_duration_secs": 6.67, "total_chunk_duration_secs": 6.67, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 3, "attempts": 1, "status": "success", "call_duration_secs": 23.532, "total_chunk_duration_secs": 23.532, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 2, "attempts": 1, "status": "success", "call_duration_secs": 24.491, "total_chunk_duration_secs": 24.491, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 1, "attempts": 1, "status": "success", "call_duration_secs": 26.876, "total_chunk_duration_secs": 26.876, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 4, "attempts": 1, "status": "success", "call_duration_secs": 21.033, "total_chunk_duration_secs": 21.033, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 5, "attempts": 1, "status": "success", "call_duration_secs": 20.205, "total_chunk_duration_secs": 20.205, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 6, "attempts": 1, "status": "success", "call_duration_secs": 24.665, "total_chunk_duration_secs": 24.665, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 7, "attempts": 1, "status": "success", "call_duration_secs": 39.47, "total_chunk_duration_secs": 39.47, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 8, "attempts": 1, "status": "success", "call_duration_secs": 38.982, "total_chunk_duration_secs": 38.982, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 9, "attempts": 1, "status": "success", "call_duration_secs": 23.104, "total_chunk_duration_secs": 23.104, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 11, "attempts": 1, "status": "success", "call_duration_secs": 10.301, "total_chunk_duration_secs": 10.301, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 10, "attempts": 1, "status": "success", "call_duration_secs": 33.405, "total_chunk_duration_secs": 33.405, "error": null}
+{"event": "chunk_retrying", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 12, "attempt": 1, "delay": 1.053, "error": "Error code: 429 - {'error': {'code': '429', 'message': 'Rate limit is exceeded. Try again in 40 seconds.'}}", "retryable": true}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 13, "attempts": 1, "status": "success", "call_duration_secs": 19.127, "total_chunk_duration_secs": 19.127, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 14, "attempts": 1, "status": "success", "call_duration_secs": 10.157, "total_chunk_duration_secs": 10.157, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 15, "attempts": 1, "status": "success", "call_duration_secs": 23.079, "total_chunk_duration_secs": 23.079, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 17, "attempts": 1, "status": "success", "call_duration_secs": 40.469, "total_chunk_duration_secs": 40.469, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 16, "attempts": 1, "status": "success", "call_duration_secs": 41.398, "total_chunk_duration_secs": 41.398, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 19, "attempts": 1, "status": "success", "call_duration_secs": 3.266, "total_chunk_duration_secs": 3.266, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 18, "attempts": 1, "status": "success", "call_duration_secs": 41.289, "total_chunk_duration_secs": 41.289, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 12, "attempts": 2, "status": "success", "call_duration_secs": 61.236, "total_chunk_duration_secs": 80.627, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 21, "attempts": 1, "status": "success", "call_duration_secs": 17.248, "total_chunk_duration_secs": 17.248, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 22, "attempts": 1, "status": "success", "call_duration_secs": 1.736, "total_chunk_duration_secs": 1.736, "error": null}
+{"event": "chunk_processed", "mode": "grammar", "job_id": "zTylr5WJw_SG", "chunk_index": 20, "attempts": 1, "status": "success", "call_duration_secs": 37.62, "total_chunk_duration_secs": 37.62, "error": null}
+{"event": "job_finished", "mode": "grammar", "job_id": "zTylr5WJw_SG", "status": "succeeded", "duration_secs": 164.997}
+{"event": "job_started", "mode": "translate", "job_id": "rge7T0YaikWO", "chunks": 1}
+{"event": "chunk_processed", "mode": "translate", "job_id": "rge7T0YaikWO", "chunk_index": 0, "attempts": 1, "status": "success", "call_duration_secs": 12.06, "total_chunk_duration_secs": 12.06, "error": null}
+{"event": "job_finished", "mode": "translate", "job_id": "rge7T0YaikWO", "status": "succeeded", "duration_secs": 12.06}
+{"event": "job_started", "mode": "translate", "job_id": "yWfCAzs7sl6T", "chunks": 1}
+{"event": "chunk_processed", "mode": "translate", "job_id": "yWfCAzs7sl6T", "chunk_index": 0, "attempts": 1, "status": "success", "call_duration_secs": 9.323, "total_chunk_duration_secs": 9.323, "error": null}
+{"event": "job_finished", "mode": "translate", "job_id": "yWfCAzs7sl6T", "status": "succeeded", "duration_secs": 9.323}

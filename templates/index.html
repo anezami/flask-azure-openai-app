@@ -28,6 +28,9 @@
     <header style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1rem;">
       <h2 style="margin:0;">{{ strings.app_heading }}</h2>
       <div style="display:flex; align-items:center; gap:1rem;">
+  {% if result or job_id %}
+  <button type="button" id="jumpBtn" style="white-space:nowrap;">{{ strings.jump_to_output }}</button>
+  {% endif %}
         {% if user %}
           <div style="display:flex; align-items:center; gap:0.5rem;">
             {% if user.picture %}
@@ -70,7 +73,7 @@
   <form id="mainForm" method="post" action="/process" enctype="multipart/form-data">
       <fieldset style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
         <label for="mode" style="margin:0;">{{ strings.mode_label }}</label>
-        <select id="mode" name="mode" style="min-width:150px;">
+  <select id="mode" name="mode" style="min-width:150px;" data-current-mode="{{ mode }}">
           <option value="grammar" {% if mode != 'translate' %}selected{% endif %}>{{ strings.mode_grammar }}</option>
           <option value="translate" {% if mode == 'translate' %}selected{% endif %}>{{ strings.mode_translation }}</option>
         </select>
@@ -99,6 +102,16 @@
   <button type="submit">{{ strings.process }}</button>
     </form>
 
+    {% if job_id %}
+    <section id="jobSection" style="margin-top:1.5rem;" data-job-id="{{ job_id }}">
+      <h4 style="margin-top:0;">Processing...</h4>
+      <div style="background:#eee; border-radius:6px; height:18px; overflow:hidden; position:relative;">
+        <div id="jobProgressBar" style="background:#1771e6; width:0%; height:100%; transition:width 0.4s;"></div>
+      </div>
+      <div id="jobStatusText" style="margin-top:0.5rem; font-size:0.9rem; color:#555;">Starting job…</div>
+    </section>
+    {% endif %}
+
     {% if stats %}
     <h3>{{ strings.stats }}</h3>
     <ul>
@@ -112,14 +125,18 @@
     {% endif %}
 
     {% if result %}
-  <h3>{{ strings.output }}</h3>
-      <div class="result">{{ result }}</div>
+  <h3 id="resultBlock" style="display:flex; align-items:center; justify-content:space-between; gap:1rem;">{{ strings.output }}
+    <button type="button" id="copyBtn" data-copy-label="{{ strings.copy_output }}" data-copied-label="{{ strings.copied }}">{{ strings.copy_output }}</button>
+  </h3>
+      <div class="result" id="resultText">{{ result }}</div>
     {% endif %}
 
 
   </main>
 
   <script>
+  const jobSection = document.getElementById('jobSection');
+  const JOB_ID = jobSection ? jobSection.getAttribute('data-job-id') : null;
   const modeSelect = document.getElementById('mode');
   const options = document.getElementById('translationOptions');
   const fileInput = document.getElementById('file');
@@ -133,11 +150,13 @@
       options.style.display = modeSelect.value === 'translate' ? 'flex' : 'none';
     }
 
-    // Initialize on page load
-    syncOptions();
-    {% if mode == 'translate' %}
-    if (options) options.style.display = 'flex';
-    {% endif %}
+    // Initialize on page load (uses data attribute rather than inline Jinja condition inside JS)
+    const currentMode = modeSelect.getAttribute('data-current-mode');
+    if (currentMode === 'translate' && options) {
+      options.style.display = 'flex';
+    } else {
+      syncOptions();
+    }
 
     modeSelect.addEventListener('change', syncOptions);
     fileInput.addEventListener('change', () => {
@@ -164,6 +183,85 @@
     syncOptions();
     loadLanguages();
   form?.addEventListener('submit', () => { if (overlay) overlay.style.display = 'flex'; });
+  // Auto-scroll to result if present after load
+  window.addEventListener('load', () => {
+    const rb = document.getElementById('resultBlock');
+    if (rb) {
+      rb.scrollIntoView({behavior: 'smooth', block: 'start'});
+    }
+    const jumpBtn = document.getElementById('jumpBtn');
+    if (jumpBtn) {
+      jumpBtn.addEventListener('click', () => {
+        const target = document.getElementById('resultBlock') || document.getElementById('jobSection');
+        if (target) target.scrollIntoView({behavior:'smooth', block:'start'});
+      });
+    }
+    const copyBtn = document.getElementById('copyBtn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const txtEl = document.getElementById('resultText');
+        if (!txtEl) return;
+        const raw = txtEl.innerText || txtEl.textContent || '';
+        try {
+          await navigator.clipboard.writeText(raw);
+          const original = copyBtn.getAttribute('data-copy-label');
+          const done = copyBtn.getAttribute('data-copied-label') || 'Copied';
+          copyBtn.textContent = done;
+          copyBtn.disabled = true;
+          setTimeout(() => { copyBtn.textContent = original; copyBtn.disabled = false; }, 2000);
+        } catch {}
+      });
+    }
+    if (JOB_ID) {
+      startJobPolling(JOB_ID);
+    }
+  });
+
+  function startJobPolling(id) {
+    const bar = document.getElementById('jobProgressBar');
+    const text = document.getElementById('jobStatusText');
+    if (!bar || !text) return;
+    let timer = setInterval(async () => {
+      try {
+        const res = await fetch(`/job/${id}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const pct = data.progress_percent || 0;
+        bar.style.width = pct + '%';
+        let statusLine = `Status: ${data.status} – ${data.chunks_completed||0}/${data.chunks_total||0} chunks (${pct}%)`;
+        if (data.status === 'failed' && data.error) statusLine += ` – Error: ${data.error}`;
+        text.textContent = statusLine;
+        if (data.status === 'succeeded') {
+          clearInterval(timer);
+          if (data.result) {
+            injectResult(data.result);
+          }
+        } else if (data.status === 'failed') {
+          clearInterval(timer);
+        }
+      } catch {}
+    }, 1200);
+  }
+
+  function injectResult(resultText) {
+    // Create result block if absent
+    let header = document.getElementById('resultBlock');
+    if (!header) {
+      header = document.createElement('h3');
+      header.id = 'resultBlock';
+      header.textContent = '{{ strings.output }}';
+      document.querySelector('main.container')?.appendChild(header);
+    }
+    let resDiv = document.getElementById('resultText');
+    if (!resDiv) {
+      resDiv = document.createElement('div');
+      resDiv.id = 'resultText';
+      resDiv.className = 'result';
+      header.insertAdjacentElement('afterend', resDiv);
+    }
+    resDiv.textContent = resultText;
+    header.scrollIntoView({behavior:'smooth'});
+  }
   </script>
 </body>
 </html>

@@ -35,6 +35,9 @@ _translations: Dict[str, Dict[str, str]] = {
     'words': 'Words',
     'characters': 'Characters',
     'input_text': 'Input text',
+        'jump_to_output': 'Jump to output',
+    'copy_output': 'Copy',
+    'copied': 'Copied!',
     },
     'de': {
         'app_title': 'Text-Assistent — Grammatik & Übersetzung',
@@ -69,6 +72,9 @@ _translations: Dict[str, Dict[str, str]] = {
     'words': 'Wörter',
     'characters': 'Zeichen',
     'input_text': 'Eingegebener Text',
+        'jump_to_output': 'Zum Ergebnis springen',
+    'copy_output': 'Kopieren',
+    'copied': 'Kopiert!',
     },
 }
 
