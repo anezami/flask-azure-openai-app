@@ -213,11 +213,11 @@
       });
     }
     if (JOB_ID) {
-      startJobPolling(JOB_ID);
+      startJobStream(JOB_ID);
     }
   });
 
-  function startJobPolling(id) {
+  function startJobPolling(id) { /* fallback simple polling retained */
     const bar = document.getElementById('jobProgressBar');
     const text = document.getElementById('jobStatusText');
     if (!bar || !text) return;
@@ -226,21 +226,59 @@
         const res = await fetch(`/job/${id}/status`);
         if (!res.ok) return;
         const data = await res.json();
-        const pct = data.progress_percent || 0;
-        bar.style.width = pct + '%';
-        let statusLine = `Status: ${data.status} – ${data.chunks_completed||0}/${data.chunks_total||0} chunks (${pct}%)`;
-        if (data.status === 'failed' && data.error) statusLine += ` – Error: ${data.error}`;
-        text.textContent = statusLine;
-        if (data.status === 'succeeded') {
-          clearInterval(timer);
-          if (data.result) {
-            injectResult(data.result);
-          }
-        } else if (data.status === 'failed') {
-          clearInterval(timer);
-        }
+        updateProgressUI(data, bar, text);
+        if (data.status === 'succeeded' || data.status === 'failed') clearInterval(timer);
+        if (data.status === 'succeeded' && data.result) injectResult(data.result);
       } catch {}
-    }, 1200);
+    }, 1500);
+  }
+
+  function startJobStream(id) {
+    const bar = document.getElementById('jobProgressBar');
+    const text = document.getElementById('jobStatusText');
+    if (!bar || !text) return;
+    try {
+      const es = new EventSource(`/job/${id}/stream`);
+      es.onmessage = (evt) => {
+        if (!evt.data) return;
+        try {
+          const msg = JSON.parse(evt.data);
+          if (msg.type === 'started') {
+            text.textContent = 'Started…';
+          } else if (msg.type === 'progress') {
+            updateProgressUI({
+              status: 'running',
+              chunks_completed: msg.chunks_completed,
+              chunks_total: msg.chunks_total,
+              progress_percent: msg.progress_percent
+            }, bar, text);
+          } else if (msg.type === 'error') {
+            text.textContent = `Error: ${msg.message}`;
+          } else if (msg.type === 'final') {
+            // fetch final state once
+            fetch(`/job/${id}/status`).then(r=>r.json()).then(data=>{
+              updateProgressUI(data, bar, text);
+              if (data.status === 'succeeded' && data.result) injectResult(data.result);
+            });
+            es.close();
+          }
+        } catch {}
+      };
+      es.onerror = () => {
+        es.close();
+        startJobPolling(id); // fallback
+      };
+    } catch {
+      startJobPolling(id);
+    }
+  }
+
+  function updateProgressUI(data, bar, text) {
+    const pct = data.progress_percent || 0;
+    bar.style.width = pct + '%';
+    let statusLine = `Status: ${data.status} – ${data.chunks_completed||0}/${data.chunks_total||0} chunks (${pct}%)`;
+    if (data.status === 'failed' && data.error) statusLine += ` – Error: ${data.error}`;
+    text.textContent = statusLine;
   }
 
   function injectResult(resultText) {

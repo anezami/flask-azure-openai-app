@@ -9,7 +9,7 @@ import threading
 from queue import Queue
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, render_template, request, redirect, url_for, session, flash, get_flashed_messages, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, get_flashed_messages, jsonify, Response, stream_with_context
 from werkzeug.utils import secure_filename
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
@@ -20,7 +20,7 @@ try:
 except Exception:
     pass
 
-from azure_openai_client import call_chat_completion
+import azure_openai_client
 from chunking import chunk_text_by_tokens
 from langdetect import detect, DetectorFactory
 from i18n import get_strings
@@ -184,7 +184,34 @@ def create_app():
             job = jobs.get(job_id)
         if not job:
             return jsonify({'error': 'not_found'}), 404
-        return jsonify({k: v for k, v in job.items() if k not in ('raw_chunks',)})
+        # Exclude non-serializable / internal fields
+        return jsonify({k: v for k, v in job.items() if k not in ('raw_chunks', 'queue')})
+
+    @app.get('/job/<job_id>/stream')
+    def job_stream(job_id: str):
+        """Server-Sent Events stream for job progress."""
+        def event_gen():
+            while True:
+                with jobs_lock:
+                    job = jobs.get(job_id)
+                if not job:
+                    yield 'event: error\ndata: {"error":"not_found"}\n\n'
+                    return
+                q: Queue = job.get('queue')  # type: ignore
+                if q is None:
+                    yield 'event: error\ndata: {"error":"queue_missing"}\n\n'
+                    return
+                try:
+                    item = q.get(timeout=5)
+                except Exception:
+                    # heartbeat to keep connection alive
+                    yield 'event: ping\ndata: {}\n\n'
+                    continue
+                if item:
+                    yield f"data: {json.dumps(item)}\n\n"
+                    if item.get('type') == 'final':
+                        return
+        return Response(stream_with_context(event_gen()), mimetype='text/event-stream')
 
     def _handle_submit(async_mode: bool = False):
         user = get_authenticated_user()
@@ -300,6 +327,7 @@ def create_app():
                     'result': None,
                     'error': None,
                     'metrics': [],
+                    'queue': Queue(maxsize=100),  # SSE event queue
                 }
 
         # Parallelize chunk processing (best-effort) while preserving sequence.
@@ -328,7 +356,7 @@ def create_app():
                 attempt += 1
                 try:
                     t0 = time.time()
-                    content_local = call_chat_completion(
+                    content_local = azure_openai_client.call_chat_completion(
                         system_prompt=system_prompt,
                         user_content=ch_text,
                         deployment_name=deployment,
@@ -385,6 +413,13 @@ def create_app():
                     chunk_metrics.append(metric)
                 except Exception as e:
                     error_message = str(e)
+                    # Record failure metric so final accounting reflects failure
+                    chunk_metrics.append({
+                        'chunk_index': 0,
+                        'attempts': metric['attempts'] if 'metric' in locals() else 1,
+                        'status': 'failed',
+                        'error': str(e),
+                    })
             else:
                 indexed_chunks = list(enumerate(chunks))
                 with ThreadPoolExecutor(max_workers=min(max_parallel, len(chunks))) as executor:
@@ -404,9 +439,23 @@ def create_app():
                                         job['chunks_completed'] = sum(1 for r in responses if r)
                                         total = job.get('chunks_total', 0) or 1
                                         job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
+                                        q: Queue = job.get('queue')  # type: ignore
+                                        if q:
+                                            try:
+                                                q.put_nowait({'type': 'progress', 'chunks_completed': job['chunks_completed'], 'chunks_total': total, 'progress_percent': job['progress_percent']})
+                                            except Exception:
+                                                pass
                         except Exception as e:  # Capture first error; allow graceful handling
                             consecutive_failures += 1
-                            error_message = f"Chunk {future_map[future]} failed: {e}" if not error_message else error_message
+                            chunk_index = future_map[future]
+                            error_message = f"Chunk {chunk_index} failed: {e}" if not error_message else error_message
+                            # Record failure metric for final accounting
+                            chunk_metrics.append({
+                                'chunk_index': chunk_index,
+                                'attempts': 1,
+                                'status': 'failed',
+                                'error': str(e),
+                            })
                             _log_json('chunk_error', chunk_index=future_map[future], error=str(e), consecutive_failures=consecutive_failures)
                             _persist_metric({'event': 'chunk_error', 'mode': mode, 'job_id': job_id_local, 'chunk_index': future_map[future], 'error': str(e), 'consecutive_failures': consecutive_failures})
                             if async_mode and job_id_local:
@@ -417,6 +466,12 @@ def create_app():
                                         total = job.get('chunks_total', 0) or 1
                                         done = job.get('chunks_completed',0)
                                         job['progress_percent'] = round(100.0 * done / total, 1)
+                                        q: Queue = job.get('queue')  # type: ignore
+                                        if q:
+                                            try:
+                                                q.put_nowait({'type': 'error', 'message': str(e), 'chunks_failed': job['chunks_failed']})
+                                            except Exception:
+                                                pass
                             if consecutive_failures >= circuit_breaker_threshold:
                                 error_message = f"Processing aborted after {consecutive_failures} consecutive chunk failures (circuit breaker tripped). Last error: {e}"
                                 _log_json('circuit_breaker_open', failures=consecutive_failures, threshold=circuit_breaker_threshold)
@@ -432,7 +487,9 @@ def create_app():
                     job = jobs.get(job_id_local)
                     if job:
                         job['chunks_completed'] = sum(1 for r in responses if r)
-                        job['chunks_failed'] = sum(1 for m in chunk_metrics if m.get('status')=='failed')
+                        computed_failed = sum(1 for m in chunk_metrics if m.get('status')=='failed')
+                        # Preserve higher of real-time increments vs computed failures
+                        job['chunks_failed'] = max(job.get('chunks_failed', 0), computed_failed)
                         if error_message:
                             job['status'] = 'failed'
                             job['error'] = error_message
@@ -442,6 +499,12 @@ def create_app():
                         total = job.get('chunks_total', 0) or 1
                         job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
                         job['metrics'] = chunk_metrics
+                        q: Queue = job.get('queue')  # type: ignore
+                        if q:
+                            try:
+                                q.put_nowait({'type': 'final', 'status': job['status'], 'error': job.get('error'), 'progress_percent': job['progress_percent']})
+                            except Exception:
+                                pass
                 total_duration_local = time.time() - start_time
                 _persist_metric({'event': 'job_finished', 'mode': mode, 'job_id': job_id_local, 'status': 'failed' if error_message else 'succeeded', 'duration_secs': round(total_duration_local,3)})
 
@@ -451,6 +514,12 @@ def create_app():
                 with jobs_lock:
                     if job_id and job_id in jobs:
                         jobs[job_id]['status'] = 'running'
+                        q: Queue = jobs[job_id].get('queue')  # type: ignore
+                        if q:
+                            try:
+                                q.put_nowait({'type': 'started'})
+                            except Exception:
+                                pass
                 _persist_metric({'event': 'job_started', 'mode': mode, 'job_id': job_id, 'chunks': len(chunks)})
                 try:
                     _execute_job(job_id)

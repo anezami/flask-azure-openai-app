@@ -1,8 +1,60 @@
-# ChatGPTKZ2
+# Grammar & Translation Assistant (Flask + Azure OpenAI)
 
+## High-Level Overview
+
+This application is a production-oriented grammar correction and translation assistant built with Flask and Azure OpenAI (GPT‑4o). Users submit large bodies of text for either grammar enhancement or translation. The text is:
+
+1. Token-chunked safely (large inputs handled efficiently)
+2. Processed in parallel with retry, backoff, and circuit breaker logic
+3. Streamed back to the browser via **Server-Sent Events (SSE)** with a live progress bar
+4. Sanitized to ensure the model returns only the corrected or translated text (no labels/filler)
+5. Logged with structured JSON metrics (file-based + optional Application Insights / OpenTelemetry)
+
+The app relies on Azure App Service built-in authentication (e.g., Google / Entra ID) and uses a **System Assigned Managed Identity** to call Azure OpenAI—no API keys required. All uploads are processed in-memory (temporary file only) and then deleted; no persistent storage of user text.
+
+---
+## Architecture At a Glance
+
+Component | Responsibility
+--------- | --------------
+`app.py` | Flask routes, async job orchestration, SSE endpoint, retry/circuit logic
+`azure_openai_client.py` | Thin wrapper invoking Azure OpenAI via official SDK using Managed Identity
+`chunking.py` | Token-based safe splitting of large inputs
+`i18n.py` | UI localization (English / German)
+`templates/index.html` | Single-page UI (progress bar, jump navigation, SSE integration)
+`tests/` | Pytest unit tests (sanitizer, async retry & circuit breaker)
+`infra/` | Bicep template for Azure resource provisioning + deploy script
+
+Key runtime flow:
+1. User submits form → `/process` starts async job (thread) and returns page with `job_id`.
+2. Browser opens `/job/<id>/stream` (SSE) receiving events: `started`, `progress`, `error`, `final`.
+3. Backend processes chunks concurrently (`ThreadPoolExecutor`).
+4. Each chunk uses filtered retry (429 & 5xx) with exponential backoff + jitter.
+5. Circuit breaker halts further processing after N consecutive chunk failures.
+6. Structured metrics appended to `metrics.log` and optionally exported to Application Insights.
+7. Final result inserted into DOM dynamically.
+
+---
+## Resilience & Observability
+
+Feature | Details
+------- | -------
+Retry Filtering | Only 429 + 5xx (or textual rate-limit hints) trigger retry
+Backoff | Exponential with base + jitter (env configurable)
+Circuit Breaker | Aborts after configurable consecutive chunk failures
+Structured Metrics | JSON lines persisted to `metrics.log`
+App Insights (Optional) | Enable via `APPLICATIONINSIGHTS_CONNECTION_STRING`
+SSE Streaming | Live progress events (fallback to polling if EventSource fails)
+Sanitization | Removes code fences / labels from model output
+
+---
 ## Deploy to Azure Web App (with Google Auth)
 
-This repo includes infrastructure as code (Bicep) and a PowerShell script to provision and deploy an Azure Linux Web App with built-in authentication configured for Google, and an Azure Key Vault to store Google credentials. The script also grants the web app’s system-managed identity access to your Azure OpenAI resource.
+Infrastructure as Code (Bicep) + PowerShell script provision:
+* Linux Web App (App Service Plan)
+* App Service Authentication with Google (Easy Auth v2)
+* Key Vault (stores Google secret, optional future secrets)
+* Managed Identity with RBAC on Azure OpenAI
 
 ### Prerequisites
 - Azure CLI installed and logged in: `az login`
@@ -53,22 +105,19 @@ Re-running the script is safe (idempotent). It uses ARM/Bicep deployment and `az
 - The web app’s system-assigned identity is granted Key Vault Secrets User on the new vault.
 - The script attempts to assign the web app identity the `Cognitive Services OpenAI User` RBAC role on your Azure OpenAI resource. Provide `-AzureOpenAIResourceId` for the most reliable assignment; otherwise it will try to infer the resource from the endpoint or by listing in the resource group.
 
-# Text Assistant (Grammar & Translation) — Flask + Azure OpenAI (Managed Identity)
+---
+## Core Features
 
-Single-page Flask app for grammar correction and translation powered by Azure OpenAI (GPT-4o). The app trusts Azure App Service built-in authentication (e.g., Google, Microsoft Entra ID) and authenticates to Azure OpenAI using System Assigned Managed Identity via `DefaultAzureCredential`.
-
-Note: The legacy `flask-azure-openai-app` subfolder has been removed. The app at the repository root is the single source of truth.
-
-## Features
-- Single-page UI with:
-	- Text input and file upload (`.txt`, `.md`, `.docx`, `.pdf`)
-	- Mode selection dropdown: `Grammar Check` (default) or `Translation`
-	- Auto-detect source language; in Translation mode, choose a target language
-	- Language selector (UI locale): English/German
-- Azure OpenAI GPT-4o via the official `openai` SDK (Azure endpoint)
-- Chunking for large inputs to respect token budgets
-- No custom auth code: App trusts Azure App Service auth headers
-- Ready for Azure App Service Linux with CI/CD via GitHub Actions
+1. Grammar correction or translation mode
+2. Large text handling via token chunking (configurable token budget)
+3. Parallel chunk processing with order preservation
+4. Intelligent retry & circuit breaker
+5. Live SSE progress bar & jump navigation
+6. Copy-to-clipboard output
+7. UI localization (EN/DE)
+8. File uploads: `.txt`, `.md`, `.docx`, `.pdf`
+9. Structured metrics + optional telemetry
+10. Auth allowlist via `ALLOWED_EMAILS`
 
 ## Prerequisites
 - Azure subscription with permission to create Resource Groups, App Service Plans, and Web Apps
@@ -77,7 +126,7 @@ Note: The legacy `flask-azure-openai-app` subfolder has been removed. The app at
 - An Azure OpenAI resource and a model deployment name (e.g., `gpt-4o`)
 
 ## Environment Variables
-Create a `.env` in the repo root for local development or configure App Settings in Azure:
+Create a `.env` or set Azure App Settings:
 
 ```
 # Flask
@@ -97,6 +146,19 @@ TIKTOKEN_ENCODING=o200k_base
 
 # UI
 UI_LANG=en  # default UI language if session not set (en|de)
+
+# Async & Concurrency
+MAX_PARALLEL_REQUESTS=4
+RETRY_MAX_ATTEMPTS=3
+RETRY_BASE_DELAY_SECS=1.0
+RETRY_BACKOFF_FACTOR=2.0
+RETRY_JITTER_SECS=0.25
+RETRY_STATUS_CODES=429,500,502,503,504
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=3
+
+# Metrics / Telemetry
+METRICS_FILE_PATH=metrics.log
+APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...;IngestionEndpoint=...
 ```
 
 No API keys are required. The Web App will use its System Assigned Managed Identity to call Azure OpenAI. Grant this identity access in Azure AI Foundry (Cognitive Services User role on the resource).
@@ -167,6 +229,24 @@ Typical workflow steps:
 - For Azure OpenAI authorization errors, grant the Web App’s System Assigned Managed Identity the "Cognitive Services User" role on the Azure OpenAI resource
 - For local runs, ensure `az login` so `DefaultAzureCredential` can obtain a token
 
+## Testing
+
+Run unit tests (sanitization, retries, circuit breaker, async job):
+```pwsh
+pytest -q
+```
+
 ## Security & Privacy
 - Set a strong `FLASK_SECRET_KEY`
-- App does not persist user data; uploads are deleted immediately after processing
+- App does not persist user text; uploads are deleted immediately post-read
+- Use `ALLOWED_EMAILS` to restrict access beyond IdP
+- Consider enabling HTTPS-only and setting `COOKIE_SECURE` in production
+
+## Roadmap / Ideas
+- WebSockets option (currently SSE + fallback polling)
+- Token usage reporting per chunk
+- Persistent job store (Redis) for multi-instance scaling
+- Fine-grained role-based features
+
+## License
+MIT (adjust as required)
