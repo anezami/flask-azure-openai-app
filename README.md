@@ -5,7 +5,7 @@
 This application is a production-oriented grammar correction and translation assistant built with Flask and Azure OpenAI (GPT‑4o). Users submit large bodies of text for either grammar enhancement or translation. The text is:
 
 1. Token-chunked safely (large inputs handled efficiently)
-2. Processed in parallel with retry, backoff, and circuit breaker logic
+2. Processed sequentially (parallelism removed for deterministic ordering and simplified resource usage) with retry, backoff, and circuit breaker logic
 3. Streamed back to the browser via **Server-Sent Events (SSE)** with a live progress bar
 4. Sanitized to ensure the model returns only the corrected or translated text (no labels/filler)
 5. Logged with structured JSON metrics (file-based + optional Application Insights / OpenTelemetry)
@@ -28,7 +28,7 @@ Component | Responsibility
 Key runtime flow:
 1. User submits form → `/process` starts async job (thread) and returns page with `job_id`.
 2. Browser opens `/job/<id>/stream` (SSE) receiving events: `started`, `progress`, `error`, `final`.
-3. Backend processes chunks concurrently (`ThreadPoolExecutor`).
+3. Backend processes chunks sequentially (no thread pool; parallelism removed).
 4. Each chunk uses filtered retry (429 & 5xx) with exponential backoff + jitter.
 5. Circuit breaker halts further processing after N consecutive chunk failures.
 6. Structured metrics appended to `metrics.log` and optionally exported to Application Insights.
@@ -110,7 +110,7 @@ Re-running the script is safe (idempotent). It uses ARM/Bicep deployment and `az
 
 1. Grammar correction or translation mode
 2. Large text handling via token chunking (configurable token budget)
-3. Parallel chunk processing with order preservation
+3. Sequential chunk processing (parallelism removed) with preserved order
 4. Intelligent retry & circuit breaker
 5. Live SSE progress bar & jump navigation
 6. Copy-to-clipboard output

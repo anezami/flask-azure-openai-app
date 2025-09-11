@@ -8,7 +8,7 @@ import logging
 import threading
 from queue import Queue
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# Parallel executor removed (sequential processing only now)
 from flask import Flask, render_template, request, redirect, url_for, session, flash, get_flashed_messages, jsonify, Response, stream_with_context
 from werkzeug.utils import secure_filename
 from typing import Optional, Dict, Any, List, Tuple, Callable
@@ -330,8 +330,9 @@ def create_app():
                     'queue': Queue(maxsize=100),  # SSE event queue
                 }
 
-        # Parallelize chunk processing (best-effort) while preserving sequence.
-        max_parallel = max(1, int(os.getenv('MAX_PARALLEL_REQUESTS', '4')))
+        # Parallelism removed: process chunks strictly sequentially.
+        # (MAX_PARALLEL_REQUESTS environment variable is now ignored for compatibility.)
+        _ = os.getenv('MAX_PARALLEL_REQUESTS')  # kept for backward compatibility (no functional effect)
         temperature = float(os.getenv('AOAI_TEMPERATURE', '0.2'))
         max_output_tokens = int(os.getenv('MAX_OUTPUT_TOKENS', '2048'))
         deployment = os.getenv('AZURE_OPENAI_DEPLOYMENT')
@@ -406,80 +407,61 @@ def create_app():
 
         def _execute_job(job_id_local: Optional[str]=None):
             nonlocal error_message, consecutive_failures
-            if len(chunks) == 1 or max_parallel == 1:
+            # Unified sequential processing
+            for idx, ch_text in enumerate(chunks):
+                if error_message:
+                    break
                 try:
-                    _, cleaned_single, metric = process_chunk_with_retry(0, chunks[0])
-                    responses[0] = cleaned_single
+                    _, cleaned_seq, metric = process_chunk_with_retry(idx, ch_text)
+                    responses[idx] = cleaned_seq
                     chunk_metrics.append(metric)
+                    consecutive_failures = 0
+                    if async_mode and job_id_local:
+                        with jobs_lock:
+                            job = jobs.get(job_id_local)
+                            if job:
+                                job['chunks_completed'] = sum(1 for r in responses if r)
+                                total = job.get('chunks_total', 0) or 1
+                                job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
+                                q: Queue = job.get('queue')  # type: ignore
+                                if q:
+                                    try:
+                                        q.put_nowait({'type': 'progress', 'chunks_completed': job['chunks_completed'], 'chunks_total': total, 'progress_percent': job['progress_percent']})
+                                    except Exception:
+                                        pass
                 except Exception as e:
-                    error_message = str(e)
-                    # Record failure metric so final accounting reflects failure
+                    consecutive_failures += 1
+                    error_message = f"Chunk {idx} failed: {e}" if not error_message else error_message
                     chunk_metrics.append({
-                        'chunk_index': 0,
-                        'attempts': metric['attempts'] if 'metric' in locals() else 1,
+                        'chunk_index': idx,
+                        'attempts': 1,
                         'status': 'failed',
                         'error': str(e),
                     })
-            else:
-                indexed_chunks = list(enumerate(chunks))
-                with ThreadPoolExecutor(max_workers=min(max_parallel, len(chunks))) as executor:
-                    future_map = {executor.submit(process_chunk_with_retry, idx, ch_text): idx for idx, ch_text in indexed_chunks}
-                    for future in as_completed(future_map):
-                        if error_message:
-                            break
-                        try:
-                            idx, cleaned, metric = future.result()
-                            responses[idx] = cleaned
-                            chunk_metrics.append(metric)
-                            consecutive_failures = 0
-                            if async_mode and job_id_local:
-                                with jobs_lock:
-                                    job = jobs.get(job_id_local)
-                                    if job:
-                                        job['chunks_completed'] = sum(1 for r in responses if r)
-                                        total = job.get('chunks_total', 0) or 1
-                                        job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
-                                        q: Queue = job.get('queue')  # type: ignore
-                                        if q:
-                                            try:
-                                                q.put_nowait({'type': 'progress', 'chunks_completed': job['chunks_completed'], 'chunks_total': total, 'progress_percent': job['progress_percent']})
-                                            except Exception:
-                                                pass
-                        except Exception as e:  # Capture first error; allow graceful handling
-                            consecutive_failures += 1
-                            chunk_index = future_map[future]
-                            error_message = f"Chunk {chunk_index} failed: {e}" if not error_message else error_message
-                            # Record failure metric for final accounting
-                            chunk_metrics.append({
-                                'chunk_index': chunk_index,
-                                'attempts': 1,
-                                'status': 'failed',
-                                'error': str(e),
-                            })
-                            _log_json('chunk_error', chunk_index=future_map[future], error=str(e), consecutive_failures=consecutive_failures)
-                            _persist_metric({'event': 'chunk_error', 'mode': mode, 'job_id': job_id_local, 'chunk_index': future_map[future], 'error': str(e), 'consecutive_failures': consecutive_failures})
-                            if async_mode and job_id_local:
-                                with jobs_lock:
-                                    job = jobs.get(job_id_local)
-                                    if job:
-                                        job['chunks_failed'] = job.get('chunks_failed',0) + 1
-                                        total = job.get('chunks_total', 0) or 1
-                                        done = job.get('chunks_completed',0)
-                                        job['progress_percent'] = round(100.0 * done / total, 1)
-                                        q: Queue = job.get('queue')  # type: ignore
-                                        if q:
-                                            try:
-                                                q.put_nowait({'type': 'error', 'message': str(e), 'chunks_failed': job['chunks_failed']})
-                                            except Exception:
-                                                pass
-                            if consecutive_failures >= circuit_breaker_threshold:
-                                error_message = f"Processing aborted after {consecutive_failures} consecutive chunk failures (circuit breaker tripped). Last error: {e}"
-                                _log_json('circuit_breaker_open', failures=consecutive_failures, threshold=circuit_breaker_threshold)
-                                _persist_metric({'event': 'circuit_breaker_open', 'mode': mode, 'job_id': job_id_local, 'failures': consecutive_failures, 'threshold': circuit_breaker_threshold})
-                                break
-                            break
-                if error_message:
-                    responses.clear()
+                    _log_json('chunk_error', chunk_index=idx, error=str(e), consecutive_failures=consecutive_failures)
+                    _persist_metric({'event': 'chunk_error', 'mode': mode, 'job_id': job_id_local, 'chunk_index': idx, 'error': str(e), 'consecutive_failures': consecutive_failures})
+                    if async_mode and job_id_local:
+                        with jobs_lock:
+                            job = jobs.get(job_id_local)
+                            if job:
+                                job['chunks_failed'] = job.get('chunks_failed',0) + 1
+                                total = job.get('chunks_total', 0) or 1
+                                done = job.get('chunks_completed',0)
+                                job['progress_percent'] = round(100.0 * done / total, 1)
+                                q: Queue = job.get('queue')  # type: ignore
+                                if q:
+                                    try:
+                                        q.put_nowait({'type': 'error', 'message': str(e), 'chunks_failed': job['chunks_failed']})
+                                    except Exception:
+                                        pass
+                    if consecutive_failures >= circuit_breaker_threshold:
+                        error_message = f"Processing aborted after {consecutive_failures} consecutive chunk failures (circuit breaker tripped). Last error: {e}"
+                        _log_json('circuit_breaker_open', failures=consecutive_failures, threshold=circuit_breaker_threshold)
+                        _persist_metric({'event': 'circuit_breaker_open', 'mode': mode, 'job_id': job_id_local, 'failures': consecutive_failures, 'threshold': circuit_breaker_threshold})
+                        break
+            if error_message:
+                # Clear partial responses to match previous behavior (no partial output returned)
+                responses.clear()
 
             # Finalize job record if async
             if async_mode and job_id_local:
