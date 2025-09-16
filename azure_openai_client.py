@@ -66,3 +66,42 @@ def call_chat_completion(system_prompt: str,
         raise RuntimeError('No choices returned from Azure OpenAI response.')
 
     return resp.choices[0].message.content or ""
+
+
+def call_chat_completion_with_meta(system_prompt: str,
+                                   user_content: str,
+                                   deployment_name: Optional[str] = None,
+                                   temperature: float = 0.2,
+                                   max_output_tokens: int = 2048) -> dict:
+    """Extended variant returning content plus finish_reason & token usage.
+
+    Returns dict: { 'content': str, 'finish_reason': str|None, 'usage': {...} }
+    """
+    client = get_client()
+    deployment = deployment_name or os.getenv('AZURE_OPENAI_DEPLOYMENT')
+    if not deployment:
+        raise RuntimeError('Missing deployment name. Set AZURE_OPENAI_DEPLOYMENT env var.')
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content}
+    ]
+    resp = client.chat.completions.create(
+        model=deployment,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_output_tokens,
+    )
+    if not resp.choices:
+        raise RuntimeError('No choices returned from Azure OpenAI response.')
+    choice = resp.choices[0]
+    finish_reason = getattr(choice, 'finish_reason', None)
+    content = choice.message.content or ""
+    usage = getattr(resp, 'usage', None)
+    usage_dict = {}
+    if usage:
+        # SDK usage object has attributes like prompt_tokens, completion_tokens, total_tokens
+        for attr in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            val = getattr(usage, attr, None)
+            if val is not None:
+                usage_dict[attr] = val
+    return {'content': content, 'finish_reason': finish_reason, 'usage': usage_dict}

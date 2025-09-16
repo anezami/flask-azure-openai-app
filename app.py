@@ -305,10 +305,26 @@ def create_app():
 
     # Chunking configuration
         # Note: GPT-4o has a very large context window, but we keep a safe input budget.
-        max_input_tokens = int(os.getenv('MAX_INPUT_TOKENS', '12000'))
+        max_input_tokens_env = int(os.getenv('MAX_INPUT_TOKENS', '12000'))
         encoding_name = os.getenv('TIKTOKEN_ENCODING', 'o200k_base')
-
-        chunks = chunk_text_by_tokens(full_input, max_tokens=max_input_tokens, encoding_name=encoding_name)
+        # Ensure chunk input token budget aligns with output token capacity to minimize truncation risk.
+        # Heuristic: grammar editing requires roughly 1:1 output length; translation may expand slightly.
+        # Clamp chunk size so that expected output can fit within max_output_tokens.
+        planned_max_output_tokens = int(os.getenv('MAX_OUTPUT_TOKENS', '2048'))
+        if mode == 'grammar':
+            safe_input_budget = int(planned_max_output_tokens * 0.9)
+        elif translate_mode:
+            safe_input_budget = int(planned_max_output_tokens * 0.8)
+        else:
+            safe_input_budget = planned_max_output_tokens
+        # Never drop below a minimal threshold to avoid micro-chunks.
+        safe_input_budget = max(50, safe_input_budget)
+        effective_input_tokens = min(max_input_tokens_env, safe_input_budget)
+        input_clamped = effective_input_tokens < max_input_tokens_env
+        chunks = chunk_text_by_tokens(full_input, max_tokens=effective_input_tokens, encoding_name=encoding_name)
+        if input_clamped:
+            # Record a metric so operators know clamping occurred.
+            _persist_metric({'event': 'input_token_budget_clamped', 'mode': mode, 'original_max_input_tokens': max_input_tokens_env, 'effective_input_tokens': effective_input_tokens, 'planned_max_output_tokens': planned_max_output_tokens})
 
         # For each chunk, call Azure OpenAI with the selected system prompt
         # Store per-chunk responses (may include empty strings). Keep None until processed.
@@ -363,13 +379,27 @@ def create_app():
                 attempt += 1
                 try:
                     t0 = time.time()
-                    content_local = azure_openai_client.call_chat_completion(
-                        system_prompt=system_prompt,
-                        user_content=ch_text,
-                        deployment_name=deployment,
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                    )
+                    # Use meta-aware call to detect truncation
+                    # Support tests that monkeypatch only call_chat_completion (not the meta variant)
+                    if hasattr(azure_openai_client, 'call_chat_completion_with_meta'):
+                        meta_resp = azure_openai_client.call_chat_completion_with_meta(
+                            system_prompt=system_prompt,
+                            user_content=ch_text,
+                            deployment_name=deployment,
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                        )
+                        content_local = meta_resp.get('content','')
+                        finish_reason_local = meta_resp.get('finish_reason')
+                    else:
+                        content_local = azure_openai_client.call_chat_completion(
+                            system_prompt=system_prompt,
+                            user_content=ch_text,
+                            deployment_name=deployment,
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                        )
+                        finish_reason_local = None
                     duration_call = time.time() - t0
                     cleaned = sanitize_model_output(content_local)
                     in_len = len(ch_text)
@@ -382,6 +412,7 @@ def create_app():
                         'total_chunk_duration_secs': round(time.time() - start_chunk, 3),
                         'input_chars': in_len,
                         'output_chars': out_len,
+                        'finish_reason': finish_reason_local,
                         'error': None,
                     }
                     _log_json('chunk_processed', **metric)
@@ -417,6 +448,120 @@ def create_app():
 
         def _execute_job(job_id_local: Optional[str]=None):
             nonlocal error_message, consecutive_failures, warnings
+            recovered_chunks: set[int] = set()
+
+            def attempt_recovery(chunk_index: int, original_text: str, initial_output: str, initial_metric: Dict[str, Any]) -> Tuple[str, bool]:
+                """Attempt to recover a possibly summarized/truncated chunk by re-splitting into smaller segments
+                and re-calling the model. Returns (recovered_output, success_flag)."""
+                # Only one recovery attempt per chunk
+                if chunk_index in recovered_chunks:
+                    return initial_output, False
+                recovered_chunks.add(chunk_index)
+                segments = []
+                # Split by paragraphs first
+                raw_paras = [p for p in original_text.split('\n\n') if p.strip()]
+                if len(raw_paras) > 1:
+                    segments = raw_paras
+                else:
+                    # Fallback: split by single lines
+                    lines = [l for l in original_text.split('\n') if l.strip()]
+                    if len(lines) > 10:
+                        # group lines into bundles of ~8 for efficiency
+                        bundle = []
+                        for l in lines:
+                            bundle.append(l)
+                            if len(bundle) >= 8:
+                                segments.append('\n'.join(bundle))
+                                bundle = []
+                        if bundle:
+                            segments.append('\n'.join(bundle))
+                    else:
+                        segments = lines if lines else [original_text]
+                # Final fallback slicing if still just one huge segment
+                if len(segments) == 1 and len(segments[0]) > 2000:
+                    text_seg = segments[0]
+                    slice_size = 1500
+                    segments = [text_seg[i:i+slice_size] for i in range(0, len(text_seg), slice_size)]
+
+                recovered_parts: List[str] = []
+                recovery_failed = False
+                for s_idx, seg in enumerate(segments):
+                    # Lightweight retry (reuse main retry settings, but limit attempts)
+                    attempt = 0
+                    while True:
+                        attempt += 1
+                        try:
+                            meta_r = None
+                            if hasattr(azure_openai_client, 'call_chat_completion_with_meta'):
+                                meta_r = azure_openai_client.call_chat_completion_with_meta(
+                                    system_prompt=system_prompt,
+                                    user_content=seg,
+                                    deployment_name=deployment,
+                                    temperature=temperature,
+                                    max_output_tokens=max_output_tokens,
+                                )
+                                seg_out = sanitize_model_output(meta_r.get('content',''))
+                            else:
+                                seg_out = sanitize_model_output(azure_openai_client.call_chat_completion(
+                                    system_prompt=system_prompt,
+                                    user_content=seg,
+                                    deployment_name=deployment,
+                                    temperature=temperature,
+                                    max_output_tokens=max_output_tokens,
+                                ))
+                            recovered_parts.append(seg_out)
+                            break
+                        except Exception as rec_exc:
+                            if attempt >= 2:  # single retry
+                                recovery_failed = True
+                                _persist_metric({'event': 'chunk_recovery_segment_failed', 'mode': mode, 'job_id': job_id_local, 'chunk_index': chunk_index, 'segment_index': s_idx, 'error': str(rec_exc)})
+                                break
+                            time.sleep(0.5)
+                    if recovery_failed:
+                        break
+
+                if recovery_failed:
+                    warn_msg = f"Recovery attempt for chunk {chunk_index} failed; using initial output."\
+                               f" Initial chars={len(initial_output)} vs input chars={len(original_text)}."
+                    warnings.append(warn_msg)
+                    if async_mode and job_id_local:
+                        with jobs_lock:
+                            job = jobs.get(job_id_local)
+                            if job:
+                                job_w = job.get('warnings', [])
+                                job_w.append(warn_msg)
+                                job['warnings'] = job_w
+                                q: Queue = job.get('queue')  # type: ignore
+                                if q:
+                                    try:
+                                        q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                    except Exception:
+                                        pass
+                    return initial_output, False
+                recovered_output = '\n'.join(recovered_parts)
+                if len(recovered_output) > max(len(initial_output)*1.2, int(0.5*len(original_text))):
+                    # Accept recovered output if it's appreciably longer and closer to input
+                    _persist_metric({'event': 'chunk_recovery_success', 'mode': mode, 'job_id': job_id_local, 'chunk_index': chunk_index, 'initial_output_chars': len(initial_output), 'recovered_output_chars': len(recovered_output)})
+                    return recovered_output, True
+                else:
+                    _persist_metric({'event': 'chunk_recovery_ignored', 'mode': mode, 'job_id': job_id_local, 'chunk_index': chunk_index, 'initial_output_chars': len(initial_output), 'recovered_output_chars': len(recovered_output)})
+                    warn_msg = f"Recovery attempt for chunk {chunk_index} produced similar length; keeping initial output." \
+                               f" Initial={len(initial_output)} vs recovered={len(recovered_output)} chars."
+                    warnings.append(warn_msg)
+                    if async_mode and job_id_local:
+                        with jobs_lock:
+                            job = jobs.get(job_id_local)
+                            if job:
+                                job_w = job.get('warnings', [])
+                                job_w.append(warn_msg)
+                                job['warnings'] = job_w
+                                q: Queue = job.get('queue')  # type: ignore
+                                if q:
+                                    try:
+                                        q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                    except Exception:
+                                        pass
+                    return initial_output, False
             # Unified sequential processing
             for idx, ch_text in enumerate(chunks):
                 if error_message:
@@ -425,10 +570,35 @@ def create_app():
                     _, cleaned_seq, metric = process_chunk_with_retry(idx, ch_text)
                     responses[idx] = cleaned_seq
                     chunk_metrics.append(metric)
-                    # Detect suspicious contraction (e.g., model skipped content). Heuristic: output < 30% of input for non-trivial input.
+                    # Truncation / contraction heuristics
+                    finish_reason_local = metric.get('finish_reason')
+                    # Explicit model signal first
+                    if finish_reason_local and str(finish_reason_local).lower() == 'length':
+                        warn_msg = f"Chunk {idx} may be truncated (finish_reason=length). Consider increasing max_output_tokens or reducing input size per chunk."
+                        warnings.append(warn_msg)
+                        if async_mode and job_id_local:
+                            with jobs_lock:
+                                job = jobs.get(job_id_local)
+                                if job:
+                                    job_w = job.get('warnings', [])
+                                    job_w.append(warn_msg)
+                                    job['warnings'] = job_w
+                                    q: Queue = job.get('queue')  # type: ignore
+                                    if q:
+                                        try:
+                                            q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                        except Exception:
+                                            pass
+                    # Detect suspicious contraction (e.g., model skipped content). Heuristic: output < 30% of input OR finish_reason=length.
                     try:
-                        if metric.get('input_chars',0) > 200 and metric.get('output_chars',0) < 0.3 * metric.get('input_chars',0):
-                            warn_msg = f"Chunk {idx} output significantly shorter than input (input {metric.get('input_chars')} chars vs output {metric.get('output_chars')} chars)."
+                        contraction_flag = False
+                        if metric.get('input_chars',0) > 200:
+                            if metric.get('output_chars',0) < 0.3 * metric.get('input_chars',0):
+                                contraction_flag = True
+                            if metric.get('finish_reason') == 'length':
+                                contraction_flag = True
+                        if contraction_flag:
+                            warn_msg = f"Chunk {idx} output significantly shorter than input (input {metric.get('input_chars')} chars vs output {metric.get('output_chars')} chars). Attempting recovery..."
                             warnings.append(warn_msg)
                             if async_mode and job_id_local:
                                 with jobs_lock:
@@ -443,6 +613,16 @@ def create_app():
                                                 q.put_nowait({'type': 'warning', 'message': warn_msg})
                                             except Exception:
                                                 pass
+                            # Attempt recovery
+                            recovered_output, recovered = attempt_recovery(idx, ch_text, cleaned_seq, metric)
+                            if recovered:
+                                responses[idx] = recovered_output
+                                metric['recovered'] = True
+                                metric['recovered_output_chars'] = len(recovered_output)
+                                metric['status'] = 'success'
+                                _persist_metric({'event': 'chunk_recovered', 'mode': mode, 'job_id': job_id_local, 'chunk_index': idx, 'recovered_output_chars': len(recovered_output)})
+                            else:
+                                metric['recovered'] = False
                     except Exception:
                         pass
                     # Detect empty output for non-empty input
