@@ -281,16 +281,19 @@ def create_app():
 
         # System prompts per mode
         if translate_mode:
-            # Strong instruction: only raw translated text, no labels, no commentary
+            # Strong instruction: only raw translated text, no labels, no commentary, NO SUMMARIZATION
             system_prompt = (
                 "You are a professional translator. Translate the user's text from the detected source "
-                f"language ({source_lang}) to the target language ({{target_lang}}). Preserve tone, style, meaning, register, and line breaks/formatting. "
-                "Return ONLY the translated text itself. Do NOT prepend labels, explanations, apologies, summaries, code fences, markdown headers, quotes, or phrases like 'Translation:', 'Here is the translation', or similar. Output strictly the final translated text."
+                f"language ({source_lang}) to the target language ({{target_lang}}). Preserve tone, style, meaning, register, factual detail, sentence boundaries, paragraph structure, lists, numbering, and line breaks/formatting EXACTLY. "
+                "Do NOT summarize, shorten, condense, omit, merge, reorder, or add content. Every sentence, bullet, number, code block, heading, line break, and paragraph present in the input MUST appear (appropriately translated) in the output. If something is already a proper name or should remain untranslated, keep it as-is. "
+                "Return ONLY the translated text itself. Do NOT prepend labels, explanations, apologies, summaries, code fences, markdown headers, quotes, or phrases like 'Translation:', 'Here is the translation', or similar. Output strictly the final translated text. "
+                "If the input is already entirely in the target language, simply reproduce it verbatim (no changes) unless there are obvious orthographic errors."
             ).format(target_lang=target_language or 'auto')
         else:
             system_prompt = (
-                "You are an expert copy editor. Improve grammar, spelling, punctuation, clarity, and style while preserving meaning, tone, formatting, and line breaks. "
-                "Return ONLY the corrected text itself with no added labels, no introductory phrases, no explanations, no code fences, and no quotes. Do NOT output phrases like 'Corrected text:', 'Here is', or similar. "
+                "You are an expert copy editor. Improve grammar, spelling, punctuation, clarity, and style while preserving meaning, tone, voice, emphasis, formatting, sentence order, paragraph structure, lists, numbering, headings, code blocks, and line breaks EXACTLY. "
+                "ABSOLUTELY DO NOT summarize, shorten, condense, omit, merge, or reorder content. Do not remove redundancy unless it is a clear grammatical error; err on the side of preserving all words. If a sentence is already correct, leave it unchanged. "
+                "Return ONLY the fully corrected text itself with no added labels, no introductory phrases, no explanations, no commentary, no code fences, and no quotes. Do NOT output phrases like 'Corrected text:', 'Here is', or similar. "
                 "If the language is German then apply these rules: "
                 "1. Zeitform (Präteritum / Präsens): Erzählung meist im Präteritum, direkte Rede im Präsens. "
                 "2. Anführungszeichen: Deutsch: „…“ (Duden-Norm). "
@@ -308,9 +311,11 @@ def create_app():
         chunks = chunk_text_by_tokens(full_input, max_tokens=max_input_tokens, encoding_name=encoding_name)
 
         # For each chunk, call Azure OpenAI with the selected system prompt
+        # Store per-chunk responses (may include empty strings). Keep None until processed.
         responses: List[Optional[str]] = [None] * len(chunks)
         error_message: Optional[str] = None
         chunk_metrics: List[Dict[str, Any]] = []  # one per chunk
+        warnings: List[str] = []  # job-level warnings surfaced to UI
         job_id: Optional[str] = None
         if async_mode:
             job_id = _create_job_id()
@@ -327,6 +332,7 @@ def create_app():
                     'result': None,
                     'error': None,
                     'metrics': [],
+                    'warnings': [],
                     'queue': Queue(maxsize=100),  # SSE event queue
                 }
 
@@ -366,12 +372,16 @@ def create_app():
                     )
                     duration_call = time.time() - t0
                     cleaned = sanitize_model_output(content_local)
+                    in_len = len(ch_text)
+                    out_len = len(cleaned)
                     metric = {
                         'chunk_index': idx,
                         'attempts': attempt,
                         'status': 'success',
                         'call_duration_secs': round(duration_call, 3),
                         'total_chunk_duration_secs': round(time.time() - start_chunk, 3),
+                        'input_chars': in_len,
+                        'output_chars': out_len,
                         'error': None,
                     }
                     _log_json('chunk_processed', **metric)
@@ -406,7 +416,7 @@ def create_app():
                     time.sleep(delay)
 
         def _execute_job(job_id_local: Optional[str]=None):
-            nonlocal error_message, consecutive_failures
+            nonlocal error_message, consecutive_failures, warnings
             # Unified sequential processing
             for idx, ch_text in enumerate(chunks):
                 if error_message:
@@ -415,12 +425,49 @@ def create_app():
                     _, cleaned_seq, metric = process_chunk_with_retry(idx, ch_text)
                     responses[idx] = cleaned_seq
                     chunk_metrics.append(metric)
+                    # Detect suspicious contraction (e.g., model skipped content). Heuristic: output < 30% of input for non-trivial input.
+                    try:
+                        if metric.get('input_chars',0) > 200 and metric.get('output_chars',0) < 0.3 * metric.get('input_chars',0):
+                            warn_msg = f"Chunk {idx} output significantly shorter than input (input {metric.get('input_chars')} chars vs output {metric.get('output_chars')} chars)."
+                            warnings.append(warn_msg)
+                            if async_mode and job_id_local:
+                                with jobs_lock:
+                                    job = jobs.get(job_id_local)
+                                    if job:
+                                        job_w = job.get('warnings', [])
+                                        job_w.append(warn_msg)
+                                        job['warnings'] = job_w
+                                        q: Queue = job.get('queue')  # type: ignore
+                                        if q:
+                                            try:
+                                                q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                            except Exception:
+                                                pass
+                    except Exception:
+                        pass
+                    # Detect empty output for non-empty input
+                    if metric.get('input_chars',0) > 0 and metric.get('output_chars',0) == 0:
+                        warn_msg = f"Chunk {idx} produced empty output while input had {metric.get('input_chars')} characters."
+                        warnings.append(warn_msg)
+                        if async_mode and job_id_local:
+                            with jobs_lock:
+                                job = jobs.get(job_id_local)
+                                if job:
+                                    job_w = job.get('warnings', [])
+                                    job_w.append(warn_msg)
+                                    job['warnings'] = job_w
+                                    q: Queue = job.get('queue')  # type: ignore
+                                    if q:
+                                        try:
+                                            q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                        except Exception:
+                                            pass
                     consecutive_failures = 0
                     if async_mode and job_id_local:
                         with jobs_lock:
                             job = jobs.get(job_id_local)
                             if job:
-                                job['chunks_completed'] = sum(1 for r in responses if r)
+                                job['chunks_completed'] = sum(1 for r in responses if r is not None)
                                 total = job.get('chunks_total', 0) or 1
                                 job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
                                 q: Queue = job.get('queue')  # type: ignore
@@ -468,7 +515,7 @@ def create_app():
                 with jobs_lock:
                     job = jobs.get(job_id_local)
                     if job:
-                        job['chunks_completed'] = sum(1 for r in responses if r)
+                        job['chunks_completed'] = sum(1 for r in responses if r is not None)
                         computed_failed = sum(1 for m in chunk_metrics if m.get('status')=='failed')
                         # Preserve higher of real-time increments vs computed failures
                         job['chunks_failed'] = max(job.get('chunks_failed', 0), computed_failed)
@@ -477,14 +524,15 @@ def create_app():
                             job['error'] = error_message
                         else:
                             job['status'] = 'succeeded'
-                            job['result'] = '\n'.join(r for r in responses if r)
+                            job['result'] = '\n'.join((r if r is not None else '') for r in responses)
                         total = job.get('chunks_total', 0) or 1
                         job['progress_percent'] = round(100.0 * job['chunks_completed'] / total, 1)
                         job['metrics'] = chunk_metrics
+                        job['warnings'] = warnings
                         q: Queue = job.get('queue')  # type: ignore
                         if q:
                             try:
-                                q.put_nowait({'type': 'final', 'status': job['status'], 'error': job.get('error'), 'progress_percent': job['progress_percent']})
+                                q.put_nowait({'type': 'final', 'status': job['status'], 'error': job.get('error'), 'progress_percent': job['progress_percent'], 'warnings': warnings})
                             except Exception:
                                 pass
                 total_duration_local = time.time() - start_time
@@ -540,7 +588,8 @@ def create_app():
             flash(flash_msg, 'error')
             return redirect(url_for('index'))
 
-        final_output = '\n'.join(r for r in responses if r)
+        # Build final output including intentionally empty chunks (preserve ordering)
+        final_output = '\n'.join((r if r is not None else '') for r in responses)
         total_duration = time.time() - start_time
 
         # Session-only conversation history

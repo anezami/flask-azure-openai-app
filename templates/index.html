@@ -109,6 +109,7 @@
         <div id="jobProgressBar" style="background:#1771e6; width:0%; height:100%; transition:width 0.4s;"></div>
       </div>
       <div id="jobStatusText" style="margin-top:0.5rem; font-size:0.9rem; color:#555;">Starting job…</div>
+      <ul id="jobWarnings" style="margin-top:0.5rem; font-size:0.8rem; color:#b46; list-style:disc; padding-left:1.25rem;"></ul>
     </section>
     {% endif %}
 
@@ -186,8 +187,11 @@
   // Auto-scroll to result if present after load
   window.addEventListener('load', () => {
     const rb = document.getElementById('resultBlock');
+    const js = document.getElementById('jobSection');
     if (rb) {
       rb.scrollIntoView({behavior: 'smooth', block: 'start'});
+    } else if (js) {
+      js.scrollIntoView({behavior: 'smooth', block: 'start'});
     }
     const jumpBtn = document.getElementById('jumpBtn');
     if (jumpBtn) {
@@ -220,6 +224,7 @@
   function startJobPolling(id) { /* fallback simple polling retained */
     const bar = document.getElementById('jobProgressBar');
     const text = document.getElementById('jobStatusText');
+    const warningsList = document.getElementById('jobWarnings');
     if (!bar || !text) return;
     let timer = setInterval(async () => {
       try {
@@ -229,6 +234,10 @@
         updateProgressUI(data, bar, text);
         if (data.status === 'succeeded' || data.status === 'failed') clearInterval(timer);
         if (data.status === 'succeeded' && data.result) injectResult(data.result);
+        if (warningsList && Array.isArray(data.warnings)) {
+          warningsList.innerHTML='';
+          data.warnings.forEach(w => { const li=document.createElement('li'); li.textContent=w; warningsList.appendChild(li); });
+        }
       } catch {}
     }, 1500);
   }
@@ -236,6 +245,7 @@
   function startJobStream(id) {
     const bar = document.getElementById('jobProgressBar');
     const text = document.getElementById('jobStatusText');
+    const warningsList = document.getElementById('jobWarnings');
     if (!bar || !text) return;
     try {
       const es = new EventSource(`/job/${id}/stream`);
@@ -252,6 +262,10 @@
               chunks_total: msg.chunks_total,
               progress_percent: msg.progress_percent
             }, bar, text);
+          } else if (msg.type === 'warning' && warningsList) {
+            const li = document.createElement('li');
+            li.textContent = msg.message;
+            warningsList.appendChild(li);
           } else if (msg.type === 'error') {
             text.textContent = `Error: ${msg.message}`;
           } else if (msg.type === 'final') {
@@ -259,6 +273,10 @@
             fetch(`/job/${id}/status`).then(r=>r.json()).then(data=>{
               updateProgressUI(data, bar, text);
               if (data.status === 'succeeded' && data.result) injectResult(data.result);
+              if (warningsList && Array.isArray(data.warnings)) {
+                warningsList.innerHTML='';
+                data.warnings.forEach(w => { const li=document.createElement('li'); li.textContent=w; warningsList.appendChild(li); });
+              }
             });
             es.close();
           }
