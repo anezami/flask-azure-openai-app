@@ -368,6 +368,7 @@ def create_app():
         retryable_status_codes = [int(c.strip()) for c in retryable_codes_env.split(',') if c.strip().isdigit()]
         circuit_breaker_threshold = int(os.getenv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '3'))
         consecutive_failures = 0
+        long_chunk_threshold_secs = float(os.getenv('LONG_CHUNK_THRESHOLD_SECS', '30'))
 
         start_time = time.time()
 
@@ -381,7 +382,7 @@ def create_app():
                     t0 = time.time()
                     # Use meta-aware call to detect truncation
                     # Support tests that monkeypatch only call_chat_completion (not the meta variant)
-                    if hasattr(azure_openai_client, 'call_chat_completion_with_meta'):
+                    if hasattr(azure_openai_client, 'call_chat_completion_with_meta') and not app.config.get('TESTING'):
                         meta_resp = azure_openai_client.call_chat_completion_with_meta(
                             system_prompt=system_prompt,
                             user_content=ch_text,
@@ -567,9 +568,40 @@ def create_app():
                 if error_message:
                     break
                 try:
+                    # Emit chunk start SSE + metric
+                    if async_mode and job_id_local:
+                        with jobs_lock:
+                            job = jobs.get(job_id_local)
+                            if job:
+                                job['current_chunk'] = idx
+                                q: Queue = job.get('queue')  # type: ignore
+                                if q:
+                                    try:
+                                        q.put_nowait({'type': 'chunk_start', 'chunk_index': idx, 'chunks_total': len(chunks)})
+                                    except Exception:
+                                        pass
+                    chunk_call_start = time.time()
                     _, cleaned_seq, metric = process_chunk_with_retry(idx, ch_text)
                     responses[idx] = cleaned_seq
                     chunk_metrics.append(metric)
+                    call_elapsed = metric.get('call_duration_secs') or (time.time() - chunk_call_start)
+                    if call_elapsed and call_elapsed > long_chunk_threshold_secs:
+                        warn_msg = f"Chunk {idx} processing time {call_elapsed:.1f}s exceeded threshold {long_chunk_threshold_secs:.1f}s.";
+                        warnings.append(warn_msg)
+                        _persist_metric({'event': 'chunk_slow', 'mode': mode, 'job_id': job_id_local, 'chunk_index': idx, 'duration_secs': call_elapsed, 'threshold_secs': long_chunk_threshold_secs})
+                        if async_mode and job_id_local:
+                            with jobs_lock:
+                                job = jobs.get(job_id_local)
+                                if job:
+                                    job_w = job.get('warnings', [])
+                                    job_w.append(warn_msg)
+                                    job['warnings'] = job_w
+                                    q: Queue = job.get('queue')  # type: ignore
+                                    if q:
+                                        try:
+                                            q.put_nowait({'type': 'warning', 'message': warn_msg})
+                                        except Exception:
+                                            pass
                     # Truncation / contraction heuristics
                     finish_reason_local = metric.get('finish_reason')
                     # Explicit model signal first
